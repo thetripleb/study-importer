@@ -102,7 +102,12 @@ button{font-family:var(--font-body);font-size:.875rem;font-weight:600;border:non
 .file-item.error{border-color:#7f1d1d;background:#1a0a0a}
 .file-item-dl{font-family:var(--font-body);font-size:.72rem;font-weight:600;background:#14532d;color:#86efac;border:1px solid #166534;border-radius:4px;padding:.2rem .65rem;cursor:pointer;text-decoration:none;white-space:nowrap;flex-shrink:0}
 .file-item-dl:hover{background:#166534}
-.file-item-error-detail{font-size:.7rem;color:#f87171;font-family:var(--font-mono);margin-top:.2rem;white-space:normal;word-break:break-word;line-height:1.5}
+.file-item-error-detail{font-size:.7rem;color:#f87171;font-family:var(--font-mono);margin-top:.3rem;white-space:normal;word-break:break-word;line-height:1.6;padding:.4rem .6rem;background:rgba(127,29,29,.3);border-radius:4px;border-left:2px solid #7f1d1d}
+.file-item-error-label{font-weight:700;color:#fca5a5;display:block;margin-bottom:.2rem;font-size:.72rem;letter-spacing:.05em;text-transform:uppercase}
+.file-item-error-msg{display:block;margin-bottom:.3rem}
+.file-item-error-hint{display:block;color:#fbbf24;font-size:.68rem;margin-bottom:.35rem}
+.file-item-retry{font-family:var(--font-body);font-size:.7rem;font-weight:600;background:transparent;color:#fca5a5;border:1px solid #7f1d1d;border-radius:4px;padding:.2rem .6rem;cursor:pointer;transition:all .15s}
+.file-item-retry:hover{background:#7f1d1d;color:#fff}
 .file-item-wrap{display:flex;flex-direction:column;gap:.2rem;flex:1;min-width:0}
 
 /* Log */
@@ -262,7 +267,10 @@ footer a:hover{text-decoration:underline}
 
 <footer>
   <span>Study Repo Importer · <code>humdev_data.json</code>-compatible output</span>
-  <span>Powered by <a href="https://anthropic.com" target="_blank">Anthropic Claude</a></span>
+  <span style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap">
+    <span style="font-family:var(--font-mono);font-size:.72rem;color:var(--border);border:1px solid var(--border);border-radius:99px;padding:.15rem .6rem">v1.9</span>
+    <span>Powered by <a href="https://anthropic.com" target="_blank">Anthropic Claude</a></span>
+  </span>
 </footer>
 </div>
 
@@ -401,8 +409,13 @@ function renderFileList() {
       error:      `<span style="color:#f87171;font-family:var(--font-mono);font-size:.72rem">✗ failed</span>`,
     }[f.status] || '';
 
-    const errorDetail = f.status === 'error' && f.errorMsg
-      ? `<div class="file-item-error-detail">⚠ ${f.errorMsg}</div>` : '';
+    const errorDetail = f.status === 'error' && f.err
+      ? `<div class="file-item-error-detail">
+          <span class="file-item-error-label">⚠ ${f.err.label}</span>
+          <span class="file-item-error-msg">${f.err.message}</span>
+          ${f.err.hint ? `<span class="file-item-error-hint">💡 ${f.err.hint}</span>` : ''}
+          <button class="file-item-retry" onclick="retryFile(${i})">↺ Retry</button>
+        </div>` : '';
 
     return `<div class="file-item ${f.status !== 'ready' ? f.status : ''}" id="fi-${i}">
       <span class="file-item-icon">${icon}</span>
@@ -806,7 +819,8 @@ async function run() {
       ok++;
     } catch(e) {
       const detail = buildErrorDetail(e);
-      log(`  ✗ ${detail}`, 'err');
+      log(`  ✗ [${detail.label}] ${detail.message}`, 'err');
+      if (detail.hint) log(`  💡 ${detail.hint}`, 'warn');
       fail++;
     }
     if (i < urlList.length - 1 || fileQueue.length) await new Promise(r => setTimeout(r, 1500));
@@ -817,54 +831,8 @@ async function run() {
     const fileObj = fileQueue[i];
     const n = urlList.length + i + 1;
     log(`[${n}/${total}] ${fileObj.name}`, 'info');
-    fileObj.status = 'processing'; fileObj.errorMsg = ''; renderFileList();
-
-    try {
-      // Step 1: Extract text
-      log('  Extracting text…', 'dim');
-      let text;
-      try {
-        text = await extractFileText(fileObj);
-      } catch(e) {
-        throw new Error(`Text extraction failed: ${e.message}`);
-      }
-      if (!text || text.length < 50) throw new Error(`File appears empty or unreadable (${text?.length||0} chars extracted)`);
-      log(`  ✓ Extracted ${text.length.toLocaleString()} chars`, 'ok');
-
-      // Step 2: Call Claude
-      const contentObj = { title: fileObj.name, text, source: `File: ${fileObj.name}`, url: '' };
-      log('  Calling Claude…', 'dim');
-      let ai;
-      try {
-        ai = await callClaude(apiKey, contentObj);
-      } catch(e) {
-        throw new Error(`Claude API error: ${e.message}`);
-      }
-
-      // Step 3: Build entries
-      const entries = buildEntries(ai, contentObj);
-      const counts = `${entries.glossary.length} glossary, ${entries.flashcards.length} flashcards, ${entries.questions.length} questions`;
-
-      // Step 4: Store per-file result
-      const outputName = fileObj.name.replace(/\.[^.]+$/, '') + '.json';
-      fileObj.result = {
-        _import_meta: { generated: new Date().toISOString(), sources: [`file:${fileObj.name}`] },
-        notes: [entries.note], glossary: entries.glossary,
-        flashcards: entries.flashcards, questions: entries.questions
-      };
-      fileObj.outputName = outputName;
-      fileObj.status = 'done';
-      log(`  ✓ ${counts} → ${outputName}`, 'ok');
-      ok++;
-
-    } catch(e) {
-      const detail = buildErrorDetail(e);
-      fileObj.status = 'error';
-      fileObj.errorMsg = detail;
-      log(`  ✗ ${detail}`, 'err');
-      fail++;
-    }
-
+    await processOneFile(fileObj, apiKey);
+    if (fileObj.status === 'done') ok++; else fail++;
     renderFileList();
     if (i < fileQueue.length - 1) await new Promise(r => setTimeout(r, 1500));
   }
@@ -877,20 +845,154 @@ async function run() {
   document.getElementById('btnProcess').innerHTML = 'Process';
 }
 
-// Build human-readable error detail from any error type
+// ── Process a single file — called by run() and retryFile() ─────────────────
+async function processOneFile(fileObj, apiKey) {
+  fileObj.status = 'processing'; fileObj.err = null; renderFileList();
+
+  try {
+    // Step 1: Extract text
+    log(`  [${fileObj.name}] Extracting text…`, 'dim');
+    let text;
+    try {
+      text = await extractFileText(fileObj);
+    } catch(e) {
+      throw new Error(`Text extraction failed: ${e.message}`);
+    }
+    if (!text || text.length < 50)
+      throw new Error(`File appears empty or unreadable (${text?.length||0} chars extracted)`);
+    log(`  ✓ Extracted ${text.length.toLocaleString()} chars`, 'ok');
+
+    // Step 2: Call Claude
+    const contentObj = { title: fileObj.name, text, source: `File: ${fileObj.name}`, url: '' };
+    log('  Calling Claude…', 'dim');
+    let ai;
+    try {
+      ai = await callClaude(apiKey, contentObj);
+    } catch(e) {
+      throw new Error(`Claude API error: ${e.message}`);
+    }
+
+    // Step 3: Build and store result
+    const entries  = buildEntries(ai, contentObj);
+    const counts   = `${entries.glossary.length} glossary, ${entries.flashcards.length} flashcards, ${entries.questions.length} questions`;
+    const outputName = fileObj.name.replace(/\.[^.]+$/, '') + '.json';
+    fileObj.result = {
+      _import_meta: { generated: new Date().toISOString(), sources: [`file:${fileObj.name}`] },
+      notes: [entries.note], glossary: entries.glossary,
+      flashcards: entries.flashcards, questions: entries.questions
+    };
+    fileObj.outputName = outputName;
+    fileObj.status = 'done';
+    log(`  ✓ ${counts} → ${outputName}`, 'ok');
+
+  } catch(e) {
+    const detail = buildErrorDetail(e);
+    fileObj.status = 'error';
+    fileObj.err = detail;
+    log(`  ✗ [${detail.label}] ${detail.message}`, 'err');
+    if (detail.hint) log(`  💡 ${detail.hint}`, 'warn');
+  }
+}
+
+// ── Retry a single failed file ────────────────────────────────────────────────
+async function retryFile(i) {
+  const fileObj = uploadedFiles[i];
+  if (!fileObj || fileObj.status === 'processing') return;
+  const apiKey = document.getElementById('apiKey').value.trim();
+  if (!apiKey) { log('API key required to retry.', 'err'); return; }
+
+  log(`↺ Retrying: ${fileObj.name}`, 'info');
+  await processOneFile(fileObj, apiKey);
+  renderFileList();
+
+  if (fileObj.status === 'done') {
+    document.getElementById('btnDownloadAll').disabled = false;
+    log(`  ✓ Retry succeeded → ${fileObj.outputName}`, 'ok');
+  }
+}
+
+// Build structured error object { label, message, hint }
 function buildErrorDetail(e) {
-  const msg = e?.message || String(e);
-  // JSON parse errors — show position context
-  if (msg.includes('JSON') || msg.includes('position')) {
-    return `JSON parse error: ${msg} — response likely truncated. Try fewer files at once or use Light density mode.`;
+  const raw = e?.message || String(e);
+
+  // ── JSON / parse errors ────────────────────────────────────────────────────
+  if (raw.includes('JSON') || raw.includes('position') || raw.includes('parse')) {
+    return {
+      label: 'Response Parse Error',
+      message: 'Claude returned a response that could not be parsed as JSON.',
+      hint: 'Try switching to Light density mode (fewer items) or process this file on its own — large files sometimes push the response over the token limit.'
+    };
   }
-  // API errors
-  if (msg.includes('Claude API')) return msg;
-  // Network errors
-  if (msg.includes('fetch') || msg.includes('network') || msg.includes('Failed')) {
-    return `Network error: ${msg} — check your connection or proxy settings.`;
+
+  // ── Token / length errors ──────────────────────────────────────────────────
+  if (raw.includes('max_tokens') || raw.includes('token') || raw.includes('length')) {
+    return {
+      label: 'Response Too Long',
+      message: 'The generated content exceeded the maximum response length.',
+      hint: 'Switch to Light density mode or split large presentations into smaller chunks before uploading.'
+    };
   }
-  return msg;
+
+  // ── API key errors ─────────────────────────────────────────────────────────
+  if (raw.includes('401') || raw.includes('auth') || raw.includes('API key') || raw.includes('x-api-key')) {
+    return {
+      label: 'API Key Error',
+      message: 'Your Anthropic API key was rejected.',
+      hint: 'Check your API key is correct — it should start with sk-ant-. Get a key at console.anthropic.com.'
+    };
+  }
+
+  // ── Rate limit ─────────────────────────────────────────────────────────────
+  if (raw.includes('429') || raw.includes('rate') || raw.includes('limit')) {
+    return {
+      label: 'Rate Limited',
+      message: 'Too many requests sent to the Anthropic API.',
+      hint: 'Wait 30–60 seconds then retry. If this keeps happening, process files one at a time.'
+    };
+  }
+
+  // ── Model not found ────────────────────────────────────────────────────────
+  if (raw.includes('404') || raw.includes('model') || raw.includes('not found')) {
+    return {
+      label: 'Model Error',
+      message: raw.includes('404') ? 'The AI model was not found — the model name may be outdated.' : raw,
+      hint: 'This is a bug in the app — please report it.'
+    };
+  }
+
+  // ── Extraction errors ──────────────────────────────────────────────────────
+  if (raw.includes('extraction') || raw.includes('empty') || raw.includes('unreadable') || raw.includes('chars')) {
+    return {
+      label: 'File Extraction Error',
+      message: raw,
+      hint: 'The file may be scanned/image-based (no real text), password-protected, or corrupted. Try opening and re-saving it.'
+    };
+  }
+
+  // ── PPTX / ZIP errors ─────────────────────────────────────────────────────
+  if (raw.includes('JSZip') || raw.includes('slide') || raw.includes('zip') || raw.includes('pptx')) {
+    return {
+      label: 'PPTX Extraction Error',
+      message: raw,
+      hint: 'Try re-saving the file in PowerPoint as .pptx (File → Save As) and re-uploading.'
+    };
+  }
+
+  // ── Network / proxy errors ────────────────────────────────────────────────
+  if (raw.includes('fetch') || raw.includes('network') || raw.includes('Failed') || raw.includes('proxy')) {
+    return {
+      label: 'Network Error',
+      message: raw,
+      hint: 'Check your internet connection. If fetching a web page, try your custom proxy URL in settings.'
+    };
+  }
+
+  // ── Generic fallback ──────────────────────────────────────────────────────
+  return {
+    label: 'Error',
+    message: raw,
+    hint: null
+  };
 }
 
 // ── Download functions are now downloadFile(i) and downloadAll() above ──
