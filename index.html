@@ -439,25 +439,55 @@ async function getYTTranscript(videoId) {
 }
 
 // ── Web page content ──────────────────────────────────────────────────────────
+const BOT_SIGNALS = [
+  'enable javascript','browser does not support','checking your browser',
+  'ddos protection','just a moment','access denied','403 forbidden',
+  'robot or human','are you a robot','cf-browser-verification',
+  'captcha','please wait','security check'
+];
+
 async function getWebContent(url) {
   log('  Fetching page…', 'dim');
   const html = await proxyFetch(url);
+
+  const htmlLower = html.toLowerCase().slice(0, 3000);
+  const botHit = BOT_SIGNALS.find(s => htmlLower.includes(s));
+  if (botHit) throw new Error(`Site returned a bot-detection page ("${botHit}"). Try saving the page as a .txt file and use the Files tab instead.`);
+
   const doc = new DOMParser().parseFromString(html, 'text/html');
+
   ['script','style','noscript','iframe','nav','header','footer','aside',
    '[class*="ad-"]','[id*="ad-"]','[class*="sidebar"]','[class*="social"]',
    '[class*="comment"]','[class*="related"]','[class*="newsletter"]',
    '[class*="cookie"]','[class*="popup"]','[class*="banner"]',
    '[role="navigation"]','[role="complementary"]','[role="banner"]','[role="contentinfo"]']
    .forEach(sel => { try { doc.querySelectorAll(sel).forEach(e=>e.remove()); } catch(_){} });
+
   const title = (doc.querySelector('h1')?.textContent || doc.title || 'Untitled').trim().slice(0,120);
+
   let container = null;
-  for (const s of ['main','article','[role="main"]','.entry-content','.post-content','.content','#content']) {
+  for (const s of ['main','article','[role="main"]','.entry-content','.post-content',
+                   '.article-body','.article-content','.content','#content',
+                   '.post','.page-content','#main','body']) {
     const el = doc.querySelector(s);
-    if (el && el.textContent.trim().length > 300) { container = el; break; }
+    if (el && el.textContent.trim().length > 500) { container = el; break; }
   }
   if (!container) container = doc.body;
-  const text = (container?.textContent||'').replace(/[ \t]{2,}/g,' ').replace(/\n{3,}/g,'\n\n').trim().slice(0,14000);
-  if (text.length < 100) throw new Error('Content too short — may require login or JS rendering');
+
+  const text = (container?.textContent||'')
+    .replace(/[ \t]{2,}/g,' ')
+    .replace(/\n{3,}/g,'\n\n')
+    .trim()
+    .slice(0,14000);
+
+  if (text.length < 500) {
+    throw new Error(
+      `Only ${text.length} chars extracted. This site likely blocks scrapers. ` +
+      `Try: open the page in your browser, select all (Ctrl+A), copy, paste into Notepad, save as .txt, then upload via the Files tab.`
+    );
+  }
+
+  log(`  Title: "${title}"`, 'dim');
   return { title, text, url, source: `${new URL(url).hostname}: ${title}` };
 }
 
@@ -495,7 +525,7 @@ async function callClaude(apiKey, contentObj) {
       'anthropic-dangerous-direct-browser-access': 'true'
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-6',
       max_tokens: 4096,
       system: SYSTEM,
       messages: [{ role: 'user', content: prompt }]
