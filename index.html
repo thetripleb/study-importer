@@ -429,21 +429,54 @@ async function extractFileText(fileObj) {
     if (typeof JSZip === 'undefined') throw new Error('JSZip not loaded');
     const arrayBuffer = await file.arrayBuffer();
     const zip = await JSZip.loadAsync(arrayBuffer);
+
+    // Get slide files in order
     const slideFiles = Object.keys(zip.files)
       .filter(name => /^ppt\/slides\/slide\d+\.xml$/.test(name))
-      .sort((a, b) => {
-        const na = parseInt(a.match(/\d+/)[0]);
-        const nb = parseInt(b.match(/\d+/)[0]);
-        return na - nb;
-      });
+      .sort((a, b) => parseInt(a.match(/\d+/)[0]) - parseInt(b.match(/\d+/)[0]));
     if (!slideFiles.length) throw new Error('No slides found in PPTX file');
-    const slideTexts = await Promise.all(slideFiles.map(async (name, i) => {
+
+    // Get notes files in order
+    const notesFiles = {};
+    Object.keys(zip.files)
+      .filter(name => /^ppt\/notesSlides\/notesSlide\d+\.xml$/.test(name))
+      .forEach(name => {
+        const n = parseInt(name.match(/\d+/)[0]);
+        notesFiles[n] = name;
+      });
+
+    // Extract all slide text lines to detect boilerplate (lines repeating 3+ times)
+    const allLines = [];
+    const rawSlides = await Promise.all(slideFiles.map(async (name) => {
       const xml = await zip.files[name].async('string');
-      // Extract text from <a:t> tags (DrawingML text runs)
-      const matches = xml.match(/<a:t[^>]*>([^<]+)<\/a:t>/g) || [];
-      const text = matches.map(m => m.replace(/<[^>]+>/g, '')).join(' ').trim();
-      return text ? `[Slide ${i+1}] ${text}` : null;
+      const matches = xml.match(/<a:t[^>]*>([^<]*)<\/a:t>/g) || [];
+      return matches.map(m => m.replace(/<[^>]+>/g, '').trim()).filter(Boolean);
     }));
+    rawSlides.forEach(lines => lines.forEach(l => allLines.push(l)));
+    const lineCounts = {};
+    allLines.forEach(l => { lineCounts[l] = (lineCounts[l] || 0) + 1; });
+    const boilerplate = new Set(Object.keys(lineCounts).filter(l => lineCounts[l] >= 3));
+
+    // Build structured slide text, filtering boilerplate
+    const slideTexts = await Promise.all(slideFiles.map(async (name, i) => {
+      const slideNum = i + 1;
+      const lines = rawSlides[i].filter(l => !boilerplate.has(l));
+      if (!lines.length) return null;
+
+      // Grab speaker notes for this slide if available
+      let notesText = '';
+      if (notesFiles[slideNum]) {
+        const nXml = await zip.files[notesFiles[slideNum]].async('string');
+        const nMatches = nXml.match(/<a:t[^>]*>([^<]*)<\/a:t>/g) || [];
+        const nLines = nMatches
+          .map(m => m.replace(/<[^>]+>/g, '').trim())
+          .filter(l => l && !boilerplate.has(l) && l !== String(slideNum));
+        if (nLines.length) notesText = '\n  Notes: ' + nLines.join(' ');
+      }
+
+      return `[Slide ${slideNum}]\n${lines.join('\n')}${notesText}`;
+    }));
+
     const fullText = slideTexts.filter(Boolean).join('\n\n');
     if (!fullText.trim()) throw new Error('No text content found in PPTX slides');
     return fullText;
@@ -545,8 +578,18 @@ Schema:
   "questions": [ {"text": string, "options": [string,string,string,string], "answer": string} ]
 }
 
-Note body: comprehensive structured notes, ALL-CAPS section headers, newline-separated sections.
-Questions: exactly 4 options, answer matches one option verbatim.
+CRITICAL RULES FOR note_body:
+- Cover EVERY topic, section, and concept in the source — do NOT summarize or drop content.
+- Use ALL-CAPS section headers matching the source slide or section titles exactly.
+- Under each header include ALL bullet points, details, statistics, researcher names, dates, and examples verbatim.
+- Include speaker notes content where present — label it NOTE: under the relevant section.
+- If the source has 20 slides or sections, the notes must reflect all 20 — never collapse or skip sections.
+- More complete is always better than shorter. Aim to retain 100% of factual content.
+
+RULES FOR glossary, flashcards, questions:
+- Glossary: include every key term that appears in the source with a precise, complete definition.
+- Flashcards: front is a specific question; back is a complete, detailed answer including any relevant stats or context.
+- Questions: 4 options, answer must match one option verbatim, test specific facts not vague generalities.
 Return ONLY the JSON object, nothing else.`;
 
 function getCounts() {
