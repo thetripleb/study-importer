@@ -97,9 +97,13 @@ button{font-family:var(--font-body);font-size:.875rem;font-weight:600;border:non
 .file-item-size{color:var(--muted);font-family:var(--font-mono);font-size:.72rem;flex-shrink:0}
 .file-item-remove{background:none;border:none;color:var(--muted);cursor:pointer;padding:.2rem .4rem;font-size:.9rem;border-radius:4px;transition:color .15s}
 .file-item-remove:hover{color:#f87171}
-.file-item.processing{border-color:var(--yellow);opacity:.7}
-.file-item.done{border-color:#166534}
-.file-item.error{border-color:#7f1d1d}
+.file-item.processing{border-color:var(--yellow)}
+.file-item.done{border-color:#166534;background:#0a1a0f}
+.file-item.error{border-color:#7f1d1d;background:#1a0a0a}
+.file-item-dl{font-family:var(--font-body);font-size:.72rem;font-weight:600;background:#14532d;color:#86efac;border:1px solid #166534;border-radius:4px;padding:.2rem .65rem;cursor:pointer;text-decoration:none;white-space:nowrap;flex-shrink:0}
+.file-item-dl:hover{background:#166534}
+.file-item-error-detail{font-size:.7rem;color:#f87171;font-family:var(--font-mono);margin-top:.2rem;white-space:normal;word-break:break-word;line-height:1.5}
+.file-item-wrap{display:flex;flex-direction:column;gap:.2rem;flex:1;min-width:0}
 
 /* Log */
 #log{background:#080809;border:1px solid var(--border);border-radius:var(--r);padding:1rem 1.25rem;min-height:120px;max-height:260px;overflow-y:auto;font-family:var(--font-mono);font-size:.775rem;line-height:1.8;display:none;margin-bottom:1.25rem;scroll-behavior:smooth}
@@ -244,7 +248,7 @@ footer a:hover{text-decoration:underline}
   <button class="btn-primary" id="btnProcess" onclick="run()">Process</button>
   <button class="btn-ghost" onclick="clearAll()">Clear</button>
   <button class="btn-ghost btn-sm" id="btnTestProxy" onclick="testProxies()">Test Proxies</button>
-  <button class="btn-download" id="btnDownload" disabled onclick="download()">Download JSON</button>
+  <button class="btn-ghost btn-sm" id="btnDownloadAll" disabled onclick="downloadAll()" style="background:#14532d;color:#86efac;border-color:#166534">Download All JSON</button>
 </div>
 
 <!-- ── Log ── -->
@@ -389,14 +393,64 @@ function renderFileList() {
     const icons = { pdf: '📕', txt: '📝', md: '📝', docx: '📘', doc: '📘', pptx: '📊', ppt: '📊' };
     const icon = icons[f.ext] || '📄';
     const size = f.file.size < 1024*1024 ? `${(f.file.size/1024).toFixed(0)} KB` : `${(f.file.size/1024/1024).toFixed(1)} MB`;
-    const statusColor = f.status === 'done' ? 'var(--green)' : f.status === 'error' ? '#f87171' : f.status === 'processing' ? 'var(--yellow)' : 'var(--muted)';
+
+    const statusBadge = {
+      ready:      `<span style="color:var(--muted);font-family:var(--font-mono);font-size:.72rem">${size}</span>`,
+      processing: `<span style="color:var(--yellow);font-family:var(--font-mono);font-size:.72rem">⏳ processing…</span>`,
+      done:       `<a class="file-item-dl" onclick="downloadFile(${i})">⬇ ${f.outputName || 'download'}</a>`,
+      error:      `<span style="color:#f87171;font-family:var(--font-mono);font-size:.72rem">✗ failed</span>`,
+    }[f.status] || '';
+
+    const errorDetail = f.status === 'error' && f.errorMsg
+      ? `<div class="file-item-error-detail">⚠ ${f.errorMsg}</div>` : '';
+
     return `<div class="file-item ${f.status !== 'ready' ? f.status : ''}" id="fi-${i}">
       <span class="file-item-icon">${icon}</span>
-      <span class="file-item-name">${f.name}</span>
-      <span class="file-item-size" style="color:${statusColor}">${f.status !== 'ready' ? f.status : size}</span>
-      <button class="file-item-remove" onclick="removeFile(${i})" title="Remove">×</button>
+      <div class="file-item-wrap">
+        <div style="display:flex;align-items:center;gap:.5rem;min-width:0">
+          <span class="file-item-name">${f.name}</span>
+          ${statusBadge}
+          <button class="file-item-remove" onclick="removeFile(${i})" title="Remove" style="margin-left:auto">×</button>
+        </div>
+        ${errorDetail}
+      </div>
     </div>`;
   }).join('');
+}
+
+function downloadFile(i) {
+  const f = uploadedFiles[i];
+  if (!f || !f.result) return;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(f.result, null, 2)], { type:'application/json' }));
+  a.download = f.outputName || 'study_import.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+  log(`Downloaded: ${f.outputName}`, 'ok');
+}
+
+function downloadAll() {
+  const done = uploadedFiles.filter(f => f.status === 'done' && f.result);
+  if (!done.length) return;
+  // If only one, just download it directly
+  if (done.length === 1) { downloadFile(uploadedFiles.indexOf(done[0])); return; }
+  // Merge all into one file
+  const merged = { notes:[], glossary:[], flashcards:[], questions:[] };
+  const sources = [];
+  done.forEach(f => {
+    merged.notes.push(...(f.result.notes||[]));
+    merged.glossary.push(...(f.result.glossary||[]));
+    merged.flashcards.push(...(f.result.flashcards||[]));
+    merged.questions.push(...(f.result.questions||[]));
+    sources.push(...(f.result._import_meta?.sources||[f.name]));
+  });
+  const payload = { _import_meta:{ generated: new Date().toISOString(), source_count: done.length, sources }, ...merged };
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type:'application/json' }));
+  a.download = `study_import_${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  log(`Downloaded merged file (${done.length} sources)`, 'ok');
 }
 
 function removeFile(i) {
@@ -699,16 +753,12 @@ async function run() {
 
   document.getElementById('btnProcess').disabled = true;
   document.getElementById('btnProcess').innerHTML = '<span class="spinner"></span>Processing…';
-  document.getElementById('btnDownload').disabled = true;
+  document.getElementById('btnDownloadAll').disabled = true;
   document.getElementById('stats').style.display = 'none';
   document.getElementById('preview').style.display = 'none';
-  result = null;
 
-  const merged = { notes:[], glossary:[], flashcards:[], questions:[] };
-  const sources = [];
   let ok = 0, fail = 0;
   const total = urlList.length + fileQueue.length;
-
   log(`Starting — ${total} source${total>1?'s':''}.`, 'info');
 
   // ── Process URLs ────────────────────────────────────────────────────────────
@@ -725,109 +775,111 @@ async function run() {
         content = await getWebContent(url);
       }
       log(`  ✓ Extracted ${content.text.length.toLocaleString()} chars`, 'ok');
-      log('  Generating study materials…', 'dim');
+      log('  Calling Claude…', 'dim');
       const ai = await callClaude(apiKey, content);
       const entries = buildEntries(ai, content);
-      merged.notes.push(entries.note);
-      merged.glossary.push(...entries.glossary);
-      merged.flashcards.push(...entries.flashcards);
-      merged.questions.push(...entries.questions);
-      sources.push(url);
-      log(`  ✓ ${1} note, ${entries.glossary.length} glossary, ${entries.flashcards.length} flashcards, ${entries.questions.length} questions`, 'ok');
+      const fileResult = {
+        _import_meta: { generated: new Date().toISOString(), sources: [url] },
+        notes: [entries.note], glossary: entries.glossary,
+        flashcards: entries.flashcards, questions: entries.questions
+      };
+      // Store on a synthetic fileObj for URL sources
+      const urlSlug = (() => { try { const u = new URL(url); return u.pathname.split('/').filter(Boolean).pop() || u.hostname; } catch{ return 'url'; } })();
+      const urlFileObj = { name: url, ext: 'url', status: 'done', result: fileResult, outputName: urlSlug.replace(/[^a-zA-Z0-9_-]/g,'_').slice(0,60)+'.json', errorMsg: '' };
+      uploadedFiles.push(urlFileObj);
+      renderFileList();
+      log(`  ✓ ${entries.glossary.length} glossary, ${entries.flashcards.length} flashcards, ${entries.questions.length} questions`, 'ok');
       ok++;
     } catch(e) {
-      log(`  ✗ ${e.message}`, 'err');
+      const detail = buildErrorDetail(e);
+      log(`  ✗ ${detail}`, 'err');
       fail++;
     }
     if (i < urlList.length - 1 || fileQueue.length) await new Promise(r => setTimeout(r, 1500));
   }
 
-  // ── Process files ───────────────────────────────────────────────────────────
+  // ── Process files — each file gets its own result and download link ─────────
   for (let i = 0; i < fileQueue.length; i++) {
     const fileObj = fileQueue[i];
     const n = urlList.length + i + 1;
     log(`[${n}/${total}] ${fileObj.name}`, 'info');
-    fileObj.status = 'processing'; renderFileList();
+    fileObj.status = 'processing'; fileObj.errorMsg = ''; renderFileList();
+
     try {
+      // Step 1: Extract text
       log('  Extracting text…', 'dim');
-      const text = await extractFileText(fileObj);
-      if (!text || text.length < 50) throw new Error('File appears empty or unreadable');
+      let text;
+      try {
+        text = await extractFileText(fileObj);
+      } catch(e) {
+        throw new Error(`Text extraction failed: ${e.message}`);
+      }
+      if (!text || text.length < 50) throw new Error(`File appears empty or unreadable (${text?.length||0} chars extracted)`);
       log(`  ✓ Extracted ${text.length.toLocaleString()} chars`, 'ok');
-      const content = { title: fileObj.name, text, source: `File: ${fileObj.name}`, url: '' };
-      log('  Generating study materials…', 'dim');
-      const ai = await callClaude(apiKey, content);
-      const entries = buildEntries(ai, content);
-      merged.notes.push(entries.note);
-      merged.glossary.push(...entries.glossary);
-      merged.flashcards.push(...entries.flashcards);
-      merged.questions.push(...entries.questions);
-      sources.push(`file:${fileObj.name}`);
-      log(`  ✓ ${1} note, ${entries.glossary.length} glossary, ${entries.flashcards.length} flashcards, ${entries.questions.length} questions`, 'ok');
-      fileObj.status = 'done'; ok++;
+
+      // Step 2: Call Claude
+      const contentObj = { title: fileObj.name, text, source: `File: ${fileObj.name}`, url: '' };
+      log('  Calling Claude…', 'dim');
+      let ai;
+      try {
+        ai = await callClaude(apiKey, contentObj);
+      } catch(e) {
+        throw new Error(`Claude API error: ${e.message}`);
+      }
+
+      // Step 3: Build entries
+      const entries = buildEntries(ai, contentObj);
+      const counts = `${entries.glossary.length} glossary, ${entries.flashcards.length} flashcards, ${entries.questions.length} questions`;
+
+      // Step 4: Store per-file result
+      const outputName = fileObj.name.replace(/\.[^.]+$/, '') + '.json';
+      fileObj.result = {
+        _import_meta: { generated: new Date().toISOString(), sources: [`file:${fileObj.name}`] },
+        notes: [entries.note], glossary: entries.glossary,
+        flashcards: entries.flashcards, questions: entries.questions
+      };
+      fileObj.outputName = outputName;
+      fileObj.status = 'done';
+      log(`  ✓ ${counts} → ${outputName}`, 'ok');
+      ok++;
+
     } catch(e) {
-      log(`  ✗ ${e.message}`, 'err');
-      fileObj.status = 'error'; fail++;
+      const detail = buildErrorDetail(e);
+      fileObj.status = 'error';
+      fileObj.errorMsg = detail;
+      log(`  ✗ ${detail}`, 'err');
+      fail++;
     }
+
     renderFileList();
     if (i < fileQueue.length - 1) await new Promise(r => setTimeout(r, 1500));
   }
 
-  log(`Done. ${ok} succeeded, ${fail} failed.`, ok > 0 ? 'ok' : 'err');
-
-  if (ok > 0) {
-    result = {
-      _import_meta: { generated: new Date().toISOString(), source_count: ok, sources },
-      ...merged
-    };
-    document.getElementById('stats').style.display = 'block';
-    document.getElementById('statsRow').innerHTML =
-      [['notes',merged.notes.length,'Notes'],['glossary',merged.glossary.length,'Glossary'],
-       ['flashcards',merged.flashcards.length,'Flashcards'],['questions',merged.questions.length,'Questions']]
-      .map(([,n,l]) => `<div class="stat"><span class="stat-n">${n}</span><span class="stat-l">${l}</span></div>`).join('');
-    const prev = document.getElementById('preview');
-    prev.style.display = 'block';
-    prev.textContent = JSON.stringify(result, null, 2).slice(0, 2500) + '\n…';
-    document.getElementById('btnDownload').disabled = false;
-  }
+  const anyDone = uploadedFiles.some(f => f.status === 'done');
+  log(`Done — ${ok} succeeded, ${fail} failed.${fail > 0 ? ' See red entries above for details.' : ''}`, ok > 0 ? 'ok' : 'err');
+  if (anyDone) document.getElementById('btnDownloadAll').disabled = false;
 
   document.getElementById('btnProcess').disabled = false;
   document.getElementById('btnProcess').innerHTML = 'Process';
 }
 
-// ── Download ──────────────────────────────────────────────────────────────────
-function getDownloadFilename() {
-  if (!result) return 'study_import.json';
-  const sources = result._import_meta?.sources || [];
-
-  // Single file upload — use filename without extension
-  if (sources.length === 1 && sources[0].startsWith('file:')) {
-    const name = sources[0].replace('file:', '');
-    return name.replace(/\.[^.]+$/, '') + '.json';
+// Build human-readable error detail from any error type
+function buildErrorDetail(e) {
+  const msg = e?.message || String(e);
+  // JSON parse errors — show position context
+  if (msg.includes('JSON') || msg.includes('position')) {
+    return `JSON parse error: ${msg} — response likely truncated. Try fewer files at once or use Light density mode.`;
   }
-
-  // Single URL — use hostname + last path slug
-  if (sources.length === 1) {
-    try {
-      const u = new URL(sources[0]);
-      const slug = u.pathname.split('/').filter(Boolean).pop() || u.hostname;
-      return slug.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 60) + '.json';
-    } catch { /* fall through */ }
+  // API errors
+  if (msg.includes('Claude API')) return msg;
+  // Network errors
+  if (msg.includes('fetch') || msg.includes('network') || msg.includes('Failed')) {
+    return `Network error: ${msg} — check your connection or proxy settings.`;
   }
-
-  // Multiple sources — date-stamped
-  return `study_import_${new Date().toISOString().slice(0,10)}.json`;
+  return msg;
 }
 
-function download() {
-  if (!result) return;
-  const filename = getDownloadFilename();
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' }));
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(a.href);
-  log(`JSON downloaded as: ${filename}`, 'ok');
-}
+// ── Download functions are now downloadFile(i) and downloadAll() above ──
 
 // ── Clear ─────────────────────────────────────────────────────────────────────
 function clearAll() {
@@ -839,8 +891,7 @@ function clearAll() {
     el.style.display = 'none';
     if (id === 'log') el.innerHTML = '';
   });
-  document.getElementById('btnDownload').disabled = true;
-  result = null;
+  document.getElementById('btnDownloadAll').disabled = true;
 }
 
 // ── Proxy test ────────────────────────────────────────────────────────────────
