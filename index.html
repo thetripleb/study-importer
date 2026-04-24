@@ -6,595 +6,486 @@
 <title>Study Repo Importer</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<!-- PDF.js for browser-side PDF text extraction -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<!-- Mammoth.js for .docx extraction -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
 <style>
-  :root {
-    --bg:        #0d0d0f;
-    --surface:   #141416;
-    --surface2:  #1c1c1f;
-    --border:    #2a2a2e;
-    --accent:    #e11d48;
-    --accent-lt: #fb7185;
-    --accent-bg: #1a0810;
-    --text:      #e8e6e1;
-    --muted:     #6b6b6f;
-    --green:     #22c55e;
-    --yellow:    #eab308;
-    --font-disp: 'DM Serif Display', Georgia, serif;
-    --font-body: 'DM Sans', system-ui, sans-serif;
-    --font-mono: 'JetBrains Mono', 'Courier New', monospace;
-    --r:         8px;
-  }
+:root {
+  --bg:        #0d0d0f;
+  --surface:   #141416;
+  --surface2:  #1c1c1f;
+  --border:    #2a2a2e;
+  --accent:    #e11d48;
+  --accent-lt: #fb7185;
+  --accent-bg: #1a0810;
+  --text:      #e8e6e1;
+  --muted:     #6b6b6f;
+  --green:     #22c55e;
+  --yellow:    #eab308;
+  --blue:      #7dd3fc;
+  --font-disp: 'DM Serif Display', Georgia, serif;
+  --font-body: 'DM Sans', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Courier New', monospace;
+  --r: 8px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:var(--font-body);font-size:.9375rem;line-height:1.6;min-height:100vh;padding:2rem 1rem 4rem}
+body::before{content:'';position:fixed;inset:0;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.03'/%3E%3C/svg%3E");pointer-events:none;z-index:0}
+.wrap{max-width:800px;margin:0 auto;position:relative;z-index:1}
 
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+/* Header */
+header{margin-bottom:2.5rem;border-bottom:1px solid var(--border);padding-bottom:1.5rem}
+.header-tag{font-family:var(--font-mono);font-size:.7rem;font-weight:500;letter-spacing:.15em;color:var(--accent);text-transform:uppercase;margin-bottom:.5rem}
+h1{font-family:var(--font-disp);font-size:clamp(1.75rem,4vw,2.5rem);font-weight:400;line-height:1.2}
+h1 em{color:var(--accent);font-style:italic}
+.subtitle{margin-top:.5rem;color:var(--muted);font-size:.875rem}
 
-  html { font-size: 16px; }
+/* Tabs */
+.tab-bar{display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:0}
+.tab{font-family:var(--font-body);font-size:.85rem;font-weight:500;padding:.65rem 1.25rem;background:transparent;border:none;border-bottom:2px solid transparent;color:var(--muted);cursor:pointer;transition:all .15s;margin-bottom:-1px}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--accent-lt);border-bottom-color:var(--accent)}
+.tab-panel{display:none}.tab-panel.active{display:block}
 
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: var(--font-body);
-    font-size: 0.9375rem;
-    line-height: 1.6;
-    min-height: 100vh;
-    padding: 2rem 1rem 4rem;
-  }
+/* Cards */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:1.5rem;margin-bottom:1.25rem}
+.card-label{font-family:var(--font-mono);font-size:.68rem;font-weight:500;letter-spacing:.12em;color:var(--muted);text-transform:uppercase;margin-bottom:.75rem;display:flex;align-items:center;gap:.5rem}
+.card-label::after{content:'';flex:1;height:1px;background:var(--border)}
 
-  /* ── Grain overlay ── */
-  body::before {
-    content: '';
-    position: fixed;
-    inset: 0;
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
-    pointer-events: none;
-    z-index: 0;
-  }
+/* Inputs */
+.row{display:flex;gap:.75rem;margin-bottom:.75rem}
+.row>*{flex:1}
+label{display:block;font-size:.8rem;font-weight:500;color:var(--muted);margin-bottom:.4rem;letter-spacing:.02em}
+input,textarea,select{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--font-mono);font-size:.8rem;padding:.6rem .875rem;outline:none;transition:border-color .2s}
+input:focus,textarea:focus,select:focus{border-color:var(--accent)}
+textarea{min-height:110px;resize:vertical;line-height:1.7}
+select option{background:var(--surface2)}
+.hint{font-size:.75rem;color:var(--muted);margin-top:.35rem}
+code{font-family:var(--font-mono);font-size:.78em;background:var(--surface2);padding:.1em .35em;border-radius:3px}
 
-  .wrap {
-    max-width: 780px;
-    margin: 0 auto;
-    position: relative;
-    z-index: 1;
-  }
+/* Buttons */
+.btn-row{display:flex;gap:.75rem;align-items:center;flex-wrap:wrap;margin-bottom:1.25rem}
+button{font-family:var(--font-body);font-size:.875rem;font-weight:600;border:none;border-radius:6px;cursor:pointer;padding:.65rem 1.5rem;transition:all .18s;letter-spacing:.01em}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover:not(:disabled){background:#c41a40;transform:translateY(-1px);box-shadow:0 4px 16px rgba(225,29,72,.35)}
+.btn-primary:disabled{opacity:.45;cursor:not-allowed}
+.btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--border)}
+.btn-ghost:hover:not(:disabled){border-color:var(--text);color:var(--text)}
+.btn-ghost:disabled{opacity:.4;cursor:not-allowed}
+.btn-download{background:#14532d;color:#86efac;border:1px solid #166534}
+.btn-download:hover:not(:disabled){background:#166534;transform:translateY(-1px)}
+.btn-download:disabled{opacity:.4;cursor:not-allowed}
+.btn-sm{font-size:.78rem;padding:.45rem 1rem}
 
-  /* ── Header ── */
-  header {
-    margin-bottom: 2.5rem;
-    border-bottom: 1px solid var(--border);
-    padding-bottom: 1.5rem;
-  }
+/* Drop zone */
+.dropzone{border:2px dashed var(--border);border-radius:var(--r);padding:2rem 1.5rem;text-align:center;cursor:pointer;transition:all .2s;position:relative}
+.dropzone:hover,.dropzone.drag-over{border-color:var(--accent);background:var(--accent-bg)}
+.dropzone input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.dropzone-icon{font-size:2rem;margin-bottom:.5rem;opacity:.5}
+.dropzone-text{font-size:.875rem;color:var(--muted)}
+.dropzone-text strong{color:var(--text)}
+.dropzone-hint{font-size:.75rem;color:var(--muted);margin-top:.35rem}
 
-  .header-tag {
-    font-family: var(--font-mono);
-    font-size: 0.7rem;
-    font-weight: 500;
-    letter-spacing: 0.15em;
-    color: var(--accent);
-    text-transform: uppercase;
-    margin-bottom: 0.5rem;
-  }
+/* File list */
+#file-list{margin-top:.75rem;display:flex;flex-direction:column;gap:.4rem}
+.file-item{display:flex;align-items:center;gap:.75rem;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:.5rem .875rem;font-size:.8rem}
+.file-item-icon{font-size:1rem;flex-shrink:0}
+.file-item-name{flex:1;font-family:var(--font-mono);color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.file-item-size{color:var(--muted);font-family:var(--font-mono);font-size:.72rem;flex-shrink:0}
+.file-item-remove{background:none;border:none;color:var(--muted);cursor:pointer;padding:.2rem .4rem;font-size:.9rem;border-radius:4px;transition:color .15s}
+.file-item-remove:hover{color:#f87171}
+.file-item.processing{border-color:var(--yellow);opacity:.7}
+.file-item.done{border-color:#166534}
+.file-item.error{border-color:#7f1d1d}
 
-  h1 {
-    font-family: var(--font-disp);
-    font-size: clamp(1.75rem, 4vw, 2.5rem);
-    font-weight: 400;
-    line-height: 1.2;
-    color: var(--text);
-  }
+/* Log */
+#log{background:#080809;border:1px solid var(--border);border-radius:var(--r);padding:1rem 1.25rem;min-height:120px;max-height:260px;overflow-y:auto;font-family:var(--font-mono);font-size:.775rem;line-height:1.8;display:none;margin-bottom:1.25rem;scroll-behavior:smooth}
+.log-line{display:flex;gap:.75rem}
+.log-line .ts{color:var(--muted);user-select:none;flex-shrink:0}
+.log-ok{color:var(--green)}.log-err{color:#f87171}.log-warn{color:var(--yellow)}.log-info{color:var(--accent-lt)}.log-dim{color:var(--muted)}
 
-  h1 em {
-    color: var(--accent);
-    font-style: italic;
-  }
+/* Stats */
+#stats{display:none;background:var(--accent-bg);border:1px solid rgba(225,29,72,.25);border-radius:var(--r);padding:1rem 1.25rem;margin-bottom:1.25rem;font-family:var(--font-mono);font-size:.78rem}
+.stats-row{display:flex;gap:1.5rem;flex-wrap:wrap}
+.stat{display:flex;flex-direction:column;gap:.1rem}
+.stat-n{font-size:1.4rem;font-weight:600;color:var(--accent-lt);line-height:1}
+.stat-l{font-size:.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:.1em}
 
-  .subtitle {
-    margin-top: 0.5rem;
-    color: var(--muted);
-    font-size: 0.875rem;
-  }
+/* Preview */
+#preview{display:none;background:#080809;border:1px solid var(--border);border-radius:var(--r);padding:1rem 1.25rem;max-height:220px;overflow-y:auto;font-family:var(--font-mono);font-size:.72rem;line-height:1.7;color:#7dd3fc;white-space:pre;margin-bottom:1.25rem}
 
-  /* ── Cards ── */
-  .card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--r);
-    padding: 1.5rem;
-    margin-bottom: 1.25rem;
-  }
+/* URL tag badges */
+#url-tags{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.5rem}
+.badge{display:inline-flex;align-items:center;gap:.3rem;font-size:.7rem;font-family:var(--font-mono);background:var(--surface2);border:1px solid var(--border);border-radius:99px;padding:.2rem .65rem;color:var(--muted);font-weight:500}
+.badge.yt{color:#f87171;border-color:#3b1c1c;background:#1a0a0a}
+.badge.web{color:#7dd3fc;border-color:#1c2e3b;background:#0a1520}
+.badge.file{color:#a78bfa;border-color:#2e1c3b;background:#150a1a}
 
-  .card-label {
-    font-family: var(--font-mono);
-    font-size: 0.68rem;
-    font-weight: 500;
-    letter-spacing: 0.12em;
-    color: var(--muted);
-    text-transform: uppercase;
-    margin-bottom: 0.75rem;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
+/* Spinner */
+@keyframes spin{to{transform:rotate(360deg)}}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.15);border-top-color:var(--accent-lt);border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:.4rem}
 
-  .card-label::after {
-    content: '';
-    flex: 1;
-    height: 1px;
-    background: var(--border);
-  }
+/* Footer */
+footer{margin-top:3rem;padding-top:1.5rem;border-top:1px solid var(--border);color:var(--muted);font-size:.78rem;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem}
+footer a{color:var(--accent-lt);text-decoration:none}
+footer a:hover{text-decoration:underline}
 
-  /* ── Inputs ── */
-  .row { display: flex; gap: 0.75rem; margin-bottom: 0.75rem; }
-  .row > * { flex: 1; }
+/* Scrollbar */
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--muted)}
 
-  label {
-    display: block;
-    font-size: 0.8rem;
-    font-weight: 500;
-    color: var(--muted);
-    margin-bottom: 0.4rem;
-    letter-spacing: 0.02em;
-  }
-
-  input, textarea, select {
-    width: 100%;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    color: var(--text);
-    font-family: var(--font-mono);
-    font-size: 0.8rem;
-    padding: 0.6rem 0.875rem;
-    outline: none;
-    transition: border-color 0.2s;
-  }
-
-  input:focus, textarea:focus, select:focus {
-    border-color: var(--accent);
-  }
-
-  input[type="password"] { letter-spacing: 0.1em; }
-
-  textarea {
-    min-height: 120px;
-    resize: vertical;
-    font-size: 0.8rem;
-    line-height: 1.7;
-  }
-
-  select option { background: var(--surface2); }
-
-  .hint {
-    font-size: 0.75rem;
-    color: var(--muted);
-    margin-top: 0.35rem;
-  }
-
-  /* ── Buttons ── */
-  .btn-row { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
-
-  button {
-    font-family: var(--font-body);
-    font-size: 0.875rem;
-    font-weight: 600;
-    border: none;
-    border-radius: 6px;
-    cursor: pointer;
-    padding: 0.65rem 1.5rem;
-    transition: all 0.18s;
-    letter-spacing: 0.01em;
-  }
-
-  .btn-primary {
-    background: var(--accent);
-    color: #fff;
-  }
-  .btn-primary:hover:not(:disabled) {
-    background: #c41a40;
-    transform: translateY(-1px);
-    box-shadow: 0 4px 16px rgba(225,29,72,0.35);
-  }
-  .btn-primary:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
-  }
-
-  .btn-ghost {
-    background: transparent;
-    color: var(--muted);
-    border: 1px solid var(--border);
-  }
-  .btn-ghost:hover:not(:disabled) {
-    border-color: var(--text);
-    color: var(--text);
-  }
-  .btn-ghost:disabled { opacity: 0.4; cursor: not-allowed; }
-
-  .btn-download {
-    background: #14532d;
-    color: #86efac;
-    border: 1px solid #166534;
-  }
-  .btn-download:hover:not(:disabled) {
-    background: #166534;
-    transform: translateY(-1px);
-  }
-  .btn-download:disabled { opacity: 0.4; cursor: not-allowed; }
-
-  /* ── Progress Log ── */
-  #log {
-    background: #080809;
-    border: 1px solid var(--border);
-    border-radius: var(--r);
-    padding: 1rem 1.25rem;
-    min-height: 140px;
-    max-height: 280px;
-    overflow-y: auto;
-    font-family: var(--font-mono);
-    font-size: 0.775rem;
-    line-height: 1.8;
-    display: none;
-    margin-bottom: 1.25rem;
-    scroll-behavior: smooth;
-  }
-
-  .log-line { display: flex; gap: 0.75rem; }
-  .log-line .ts { color: var(--muted); user-select: none; flex-shrink: 0; }
-  .log-ok   { color: var(--green); }
-  .log-err  { color: #f87171; }
-  .log-warn { color: var(--yellow); }
-  .log-info { color: var(--accent-lt); }
-  .log-dim  { color: var(--muted); }
-
-  /* ── Stats bar ── */
-  #stats {
-    display: none;
-    background: var(--accent-bg);
-    border: 1px solid rgba(225,29,72,0.25);
-    border-radius: var(--r);
-    padding: 1rem 1.25rem;
-    margin-bottom: 1.25rem;
-    font-family: var(--font-mono);
-    font-size: 0.78rem;
-  }
-
-  .stats-row { display: flex; gap: 1.5rem; flex-wrap: wrap; }
-  .stat { display: flex; flex-direction: column; gap: 0.1rem; }
-  .stat-n { font-size: 1.4rem; font-weight: 600; color: var(--accent-lt); line-height: 1; }
-  .stat-l { font-size: 0.68rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; }
-
-  /* ── Preview ── */
-  #preview {
-    display: none;
-    background: #080809;
-    border: 1px solid var(--border);
-    border-radius: var(--r);
-    padding: 1rem 1.25rem;
-    max-height: 240px;
-    overflow-y: auto;
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    line-height: 1.7;
-    color: #7dd3fc;
-    white-space: pre;
-    margin-bottom: 1.25rem;
-  }
-
-  /* ── Footer ── */
-  footer {
-    margin-top: 3rem;
-    padding-top: 1.5rem;
-    border-top: 1px solid var(--border);
-    color: var(--muted);
-    font-size: 0.78rem;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-  }
-
-  footer a { color: var(--accent-lt); text-decoration: none; }
-  footer a:hover { text-decoration: underline; }
-
-  /* ── Spinner ── */
-  @keyframes spin { to { transform: rotate(360deg); } }
-  .spinner {
-    display: inline-block;
-    width: 14px; height: 14px;
-    border: 2px solid rgba(255,255,255,0.15);
-    border-top-color: var(--accent-lt);
-    border-radius: 50%;
-    animation: spin 0.7s linear infinite;
-    vertical-align: middle;
-    margin-right: 0.4rem;
-  }
-
-  /* ── Pill badge ── */
-  .badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.3rem;
-    font-size: 0.7rem;
-    font-family: var(--font-mono);
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 99px;
-    padding: 0.2rem 0.65rem;
-    color: var(--muted);
-    font-weight: 500;
-  }
-  .badge.yt  { color: #f87171; border-color: #3b1c1c; background: #1a0a0a; }
-  .badge.web { color: #7dd3fc; border-color: #1c2e3b; background: #0a1520; }
-
-  /* ── URL tag list ── */
-  #url-tags {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.4rem;
-    margin-top: 0.5rem;
-    min-height: 0;
-  }
-
-  /* ── Scrollbar ── */
-  ::-webkit-scrollbar { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-  ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
-
-  @media (max-width: 520px) {
-    .row { flex-direction: column; }
-    .btn-row { flex-direction: column; align-items: stretch; }
-  }
+@media(max-width:520px){.row{flex-direction:column}.btn-row{flex-direction:column;align-items:stretch}}
 </style>
 </head>
 <body>
 <div class="wrap">
 
-  <header>
-    <div class="header-tag">▸ Study Repo Importer</div>
-    <h1>Turn any page into <em>study data</em></h1>
-    <p class="subtitle">Paste YouTube or web URLs → generates notes, flashcards, glossary &amp; quiz questions → download as repo-ready JSON.</p>
-  </header>
+<header>
+  <div class="header-tag">▸ Study Repo Importer</div>
+  <h1>Turn any source into <em>study data</em></h1>
+  <p class="subtitle">URLs, PDFs, Word docs, and text files → notes, flashcards, glossary &amp; quiz questions → repo-ready JSON.</p>
+</header>
 
-  <!-- ── Settings ── -->
-  <div class="card">
-    <div class="card-label">Configuration</div>
-    <div class="row">
-      <div>
-        <label for="apiKey">Anthropic API Key</label>
-        <input type="password" id="apiKey" placeholder="sk-ant-…" autocomplete="off">
-        <div class="hint">Not stored anywhere — session only.</div>
-      </div>
-      <div>
-        <label for="moduleId">Module ID <span style="font-weight:400;opacity:0.6">(optional)</span></label>
-        <input type="text" id="moduleId" placeholder="e.g. mnngtb1d86bng">
-        <div class="hint">Assigns entries to a repo module.</div>
-      </div>
+<!-- ── Settings ── -->
+<div class="card">
+  <div class="card-label">Configuration</div>
+  <div class="row">
+    <div>
+      <label for="apiKey">Anthropic API Key</label>
+      <input type="password" id="apiKey" placeholder="sk-ant-…" autocomplete="off">
+      <div class="hint">Session only — never stored or transmitted except to Anthropic.</div>
     </div>
-    <div class="row">
-      <div>
-        <label for="chapterTag">Chapter / Tag</label>
-        <input type="text" id="chapterTag" placeholder="e.g. web  or  ch11" value="web">
-        <div class="hint">Written to the <code style="font-family:var(--font-mono);font-size:0.75em">chapter</code> field of every entry.</div>
-      </div>
-      <div>
-        <label for="itemCounts">Items per URL</label>
-        <select id="itemCounts">
-          <option value="light">Light — 1 note, 5 glossary, 3 cards, 3 questions</option>
-          <option value="standard" selected>Standard — 1 note, 10 glossary, 5 cards, 5 questions</option>
-          <option value="deep">Deep — 1 note, 15 glossary, 8 cards, 8 questions</option>
-        </select>
-      </div>
+    <div>
+      <label for="moduleId">Module ID <span style="font-weight:400;opacity:.6">(optional)</span></label>
+      <input type="text" id="moduleId" placeholder="e.g. mnngtb1d86bng">
+      <div class="hint">Assigns all entries to this repo module.</div>
     </div>
   </div>
+  <div class="row">
+    <div>
+      <label for="chapterTag">Chapter / Tag</label>
+      <input type="text" id="chapterTag" placeholder="web" value="web">
+    </div>
+    <div>
+      <label for="itemCounts">Items per source</label>
+      <select id="itemCounts">
+        <option value="light">Light — 1 note, 5 glossary, 3 cards, 3 questions</option>
+        <option value="standard" selected>Standard — 1 note, 10 glossary, 5 cards, 5 questions</option>
+        <option value="deep">Deep — 1 note, 15 glossary, 8 cards, 8 questions</option>
+      </select>
+    </div>
+  </div>
+  <!-- Custom proxy -->
+  <details style="margin-top:.25rem">
+    <summary style="cursor:pointer;font-size:.8rem;color:var(--muted);user-select:none;list-style:none;display:flex;align-items:center;gap:.4rem">
+      <span>▸</span> Custom proxy URL <span style="font-size:.72rem;opacity:.6">(optional — for web pages)</span>
+    </summary>
+    <div style="margin-top:.75rem">
+      <label for="customProxy">Your proxy endpoint</label>
+      <input type="text" id="customProxy" placeholder="https://yoursite.com/proxy.php?url=">
+      <div class="hint">
+        If public proxies fail, upload <code>proxy.php</code> to your own hosting:<br>
+        <code style="display:block;margin-top:.3rem;padding:.4rem .6rem;background:var(--bg);border-radius:4px;line-height:1.6">&lt;?php header('Access-Control-Allow-Origin: *'); echo file_get_contents($_GET['url'] ?? ''); ?&gt;</code>
+        Then paste <code>https://yoursite.com/proxy.php?url=</code> above. Your proxy is always tried first.
+      </div>
+    </div>
+  </details>
+</div>
 
-  <!-- ── URL Input ── -->
-  <div class="card">
-    <div class="card-label">URLs to Process</div>
+<!-- ── Input tabs ── -->
+<div class="card" style="padding-bottom:1.25rem">
+  <div class="tab-bar">
+    <button class="tab active" onclick="switchTab('urls')">🔗 URLs</button>
+    <button class="tab" onclick="switchTab('files')">📄 Files</button>
+  </div>
+
+  <!-- URL tab -->
+  <div class="tab-panel active" id="tab-urls" style="padding-top:1rem">
     <label for="urls">Enter URLs — one per line. YouTube and web pages both supported.</label>
     <textarea id="urls" placeholder="https://www.youtube.com/watch?v=98-6WfdumZY&#10;https://www.simplypsychology.org/vygotsky.html&#10;https://developer.mozilla.org/en-US/docs/..."></textarea>
     <div id="url-tags"></div>
   </div>
 
-  <!-- ── Actions ── -->
-  <div class="btn-row" style="margin-bottom:1.25rem">
-    <button class="btn-primary" id="btnProcess" onclick="run()">
-      Process URLs
-    </button>
-    <button class="btn-ghost" onclick="clearAll()">Clear</button>
-    <button class="btn-download" id="btnDownload" disabled onclick="download()">
-      Download JSON
-    </button>
+  <!-- Files tab -->
+  <div class="tab-panel" id="tab-files" style="padding-top:1rem">
+    <div class="dropzone" id="dropzone">
+      <input type="file" id="fileInput" multiple accept=".pdf,.txt,.md,.docx,.doc" onchange="handleFiles(this.files)">
+      <div class="dropzone-icon">📂</div>
+      <div class="dropzone-text"><strong>Drop files here</strong> or click to browse</div>
+      <div class="dropzone-hint">Supports PDF, Word (.docx), plain text (.txt, .md)</div>
+    </div>
+    <div id="file-list"></div>
   </div>
+</div>
 
-  <!-- ── Log ── -->
-  <div id="log"></div>
+<!-- ── Actions ── -->
+<div class="btn-row">
+  <button class="btn-primary" id="btnProcess" onclick="run()">Process</button>
+  <button class="btn-ghost" onclick="clearAll()">Clear</button>
+  <button class="btn-ghost btn-sm" id="btnTestProxy" onclick="testProxies()">Test Proxies</button>
+  <button class="btn-download" id="btnDownload" disabled onclick="download()">Download JSON</button>
+</div>
 
-  <!-- ── Stats ── -->
-  <div id="stats">
-    <div class="stats-row" id="statsRow"></div>
-  </div>
+<!-- ── Log ── -->
+<div id="log"></div>
 
-  <!-- ── Preview ── -->
-  <div id="preview"></div>
+<!-- ── Stats ── -->
+<div id="stats"><div class="stats-row" id="statsRow"></div></div>
 
-  <footer>
-    <span>Study Repo Importer · outputs <code style="font-family:var(--font-mono)">humdev_data.json</code>-compatible JSON</span>
-    <span>Uses <a href="https://www.anthropic.com" target="_blank">Anthropic Claude</a> + <a href="https://api.allorigins.win" target="_blank">allorigins proxy</a></span>
-  </footer>
+<!-- ── Preview ── -->
+<div id="preview"></div>
 
+<footer>
+  <span>Study Repo Importer · <code>humdev_data.json</code>-compatible output</span>
+  <span>Powered by <a href="https://anthropic.com" target="_blank">Anthropic Claude</a></span>
+</footer>
 </div>
 
 <script>
-// ── State ───────────────────────────────────────────────────────────────────
-let result = null;
-const PROXY = 'https://api.allorigins.win/raw?url=';
+// ── PDF.js worker ────────────────────────────────────────────────────────────
+if (typeof pdfjsLib !== 'undefined') {
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+}
 
-// ── Logging ─────────────────────────────────────────────────────────────────
+// ── State ────────────────────────────────────────────────────────────────────
+let result = null;
+let uploadedFiles = []; // { file, name, type, status }
+
+// ── Proxies (tried in order) ─────────────────────────────────────────────────
+const PUBLIC_PROXIES = [
+  {
+    name: 'allorigins-get',
+    build: u => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`,
+    extract: async r => { const j = await r.json(); return j.contents; }
+  },
+  {
+    name: 'corsproxy-io',
+    build: u => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
+    extract: async r => r.text()
+  },
+  {
+    name: 'thingproxy',
+    build: u => `https://thingproxy.freeboard.io/fetch/${u}`,
+    extract: async r => r.text()
+  },
+  {
+    name: 'allorigins-raw',
+    build: u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+    extract: async r => r.text()
+  },
+];
+
+async function proxyFetch(url) {
+  const proxies = [...PUBLIC_PROXIES];
+  const custom = document.getElementById('customProxy').value.trim();
+  if (custom) {
+    proxies.unshift({
+      name: 'custom-proxy',
+      build: u => custom + encodeURIComponent(u),
+      extract: async r => r.text()
+    });
+  }
+  const errors = [];
+  for (const proxy of proxies) {
+    try {
+      const res = await fetch(proxy.build(url), { signal: AbortSignal.timeout(12000) });
+      if (!res.ok) { errors.push(`${proxy.name}: HTTP ${res.status}`); continue; }
+      const text = await proxy.extract(res);
+      if (!text || text.length < 100) { errors.push(`${proxy.name}: empty`); continue; }
+      log(`  Proxy: ${proxy.name}`, 'dim');
+      return text;
+    } catch(e) { errors.push(`${proxy.name}: ${e.message}`); }
+  }
+  throw new Error(`All proxies failed.\n${errors.map(e=>'  '+e).join('\n')}\n\nTip: Set up proxy.php on your own hosting (see config panel above).`);
+}
+
+// ── Logging ──────────────────────────────────────────────────────────────────
 function log(msg, type = 'info') {
   const el = document.getElementById('log');
   el.style.display = 'block';
   const ts = new Date().toLocaleTimeString('en-US', { hour12: false });
   const line = document.createElement('div');
   line.className = `log-line log-${type}`;
-  line.innerHTML = `<span class="ts">${ts}</span><span>${msg}</span>`;
+  line.innerHTML = `<span class="ts">${ts}</span><span>${msg.replace(/</g,'&lt;')}</span>`;
   el.appendChild(line);
   el.scrollTop = el.scrollHeight;
 }
 
-// ── URL parsing ──────────────────────────────────────────────────────────────
+// ── Tab switching ─────────────────────────────────────────────────────────────
+function switchTab(tab) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelector(`[onclick="switchTab('${tab}')"]`).classList.add('active');
+  document.getElementById(`tab-${tab}`).classList.add('active');
+}
+
+// ── URL helpers ───────────────────────────────────────────────────────────────
 function parseURLs(raw) {
-  return raw.split('\n')
-    .map(l => l.trim())
-    .filter(l => l && !l.startsWith('#'));
+  return raw.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
 }
-
-function isYouTube(url) {
-  return /youtube\.com|youtu\.be/.test(url);
-}
-
+function isYouTube(url) { return /youtube\.com|youtu\.be/.test(url); }
 function extractVideoId(url) {
   const m = url.match(/(?:v=|youtu\.be\/|embed\/|shorts\/)([A-Za-z0-9_-]{11})/);
   return m ? m[1] : null;
 }
 
-function slugId(prefix, i, suffix) {
-  return `${prefix}-${Date.now().toString(36)}-${suffix}${String(i).padStart(3,'0')}`;
-}
-
-// ── URL tag preview ──────────────────────────────────────────────────────────
 document.getElementById('urls').addEventListener('input', function() {
   const tags = document.getElementById('url-tags');
   const urls = parseURLs(this.value);
-  tags.innerHTML = urls.slice(0, 12).map(u => {
+  tags.innerHTML = urls.slice(0,10).map(u => {
     const yt = isYouTube(u);
-    const label = yt ? '▶ YT' : '🌐 Web';
-    const cls = yt ? 'yt' : 'web';
-    const short = u.replace(/https?:\/\/(www\.)?/, '').slice(0, 50);
-    return `<span class="badge ${cls}">${label} ${short}</span>`;
-  }).join('') + (urls.length > 12 ? `<span class="badge">+${urls.length - 12} more</span>` : '');
+    return `<span class="badge ${yt?'yt':'web'}">${yt?'▶ YT':'🌐'} ${u.replace(/https?:\/\/(www\.)?/,'').slice(0,45)}</span>`;
+  }).join('') + (urls.length > 10 ? `<span class="badge">+${urls.length-10} more</span>` : '');
 });
 
-// ── CORS Proxy fetch ─────────────────────────────────────────────────────────
-async function proxyFetch(url) {
-  const res = await fetch(PROXY + encodeURIComponent(url));
-  if (!res.ok) throw new Error(`Proxy returned ${res.status} for ${url}`);
-  return res.text();
+// ── File handling ─────────────────────────────────────────────────────────────
+const dropzone = document.getElementById('dropzone');
+dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag-over'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
+dropzone.addEventListener('drop', e => {
+  e.preventDefault(); dropzone.classList.remove('drag-over');
+  handleFiles(e.dataTransfer.files);
+});
+
+function handleFiles(fileList) {
+  for (const file of fileList) {
+    if (uploadedFiles.find(f => f.name === file.name)) continue;
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (!['pdf','txt','md','docx','doc'].includes(ext)) {
+      log(`Skipped ${file.name} — unsupported type (use PDF, DOCX, TXT, MD)`, 'warn');
+      continue;
+    }
+    uploadedFiles.push({ file, name: file.name, ext, status: 'ready' });
+  }
+  renderFileList();
 }
 
-// ── YouTube transcript ───────────────────────────────────────────────────────
+function renderFileList() {
+  const list = document.getElementById('file-list');
+  if (!uploadedFiles.length) { list.innerHTML = ''; return; }
+  list.innerHTML = uploadedFiles.map((f, i) => {
+    const icons = { pdf: '📕', txt: '📝', md: '📝', docx: '📘', doc: '📘' };
+    const icon = icons[f.ext] || '📄';
+    const size = f.file.size < 1024*1024 ? `${(f.file.size/1024).toFixed(0)} KB` : `${(f.file.size/1024/1024).toFixed(1)} MB`;
+    const statusColor = f.status === 'done' ? 'var(--green)' : f.status === 'error' ? '#f87171' : f.status === 'processing' ? 'var(--yellow)' : 'var(--muted)';
+    return `<div class="file-item ${f.status !== 'ready' ? f.status : ''}" id="fi-${i}">
+      <span class="file-item-icon">${icon}</span>
+      <span class="file-item-name">${f.name}</span>
+      <span class="file-item-size" style="color:${statusColor}">${f.status !== 'ready' ? f.status : size}</span>
+      <button class="file-item-remove" onclick="removeFile(${i})" title="Remove">×</button>
+    </div>`;
+  }).join('');
+}
+
+function removeFile(i) {
+  uploadedFiles.splice(i, 1);
+  renderFileList();
+}
+
+// ── File text extraction ──────────────────────────────────────────────────────
+async function extractFileText(fileObj) {
+  const { file, ext } = fileObj;
+  if (ext === 'pdf') {
+    if (typeof pdfjsLib === 'undefined') throw new Error('PDF.js not loaded');
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    let text = '';
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      text += content.items.map(s => s.str).join(' ') + '\n';
+    }
+    return text.trim();
+  }
+  if (ext === 'docx' || ext === 'doc') {
+    if (typeof mammoth === 'undefined') throw new Error('Mammoth.js not loaded');
+    const arrayBuffer = await file.arrayBuffer();
+    const result = await mammoth.extractRawText({ arrayBuffer });
+    return result.value.trim();
+  }
+  // txt / md — plain read
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => resolve(e.target.result);
+    reader.onerror = reject;
+    reader.readAsText(file);
+  });
+}
+
+// ── YouTube transcript ────────────────────────────────────────────────────────
 async function getYTTranscript(videoId) {
-  log(`  Fetching YouTube page via proxy…`, 'dim');
+  log('  Fetching YouTube page…', 'dim');
   const html = await proxyFetch(`https://www.youtube.com/watch?v=${videoId}`);
-
-  // Extract title
   const titleMatch = html.match(/<title>(.*?)<\/title>/);
-  const title = titleMatch ? titleMatch[1].replace(' - YouTube', '').trim() : `YouTube: ${videoId}`;
-
-  // Extract ytInitialPlayerResponse
+  const title = titleMatch ? titleMatch[1].replace(' - YouTube','').trim() : `YouTube ${videoId}`;
   const match = html.match(/ytInitialPlayerResponse\s*=\s*(\{.+?\});(?:\s*(?:var|const|let)\s|<\/script>)/s);
-  if (!match) throw new Error('Could not find ytInitialPlayerResponse in page');
+  if (!match) throw new Error('Could not find player data in page');
   const player = JSON.parse(match[1]);
-
   const tracks = player?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-  if (!tracks?.length) throw new Error('No caption tracks found for this video');
-
-  // Prefer manual English, fall back to auto
-  let track = tracks.find(t => t.languageCode === 'en' && !t.kind) 
-            || tracks.find(t => t.languageCode === 'en')
-            || tracks[0];
-
-  log(`  Caption track: ${track.name?.simpleText || track.languageCode}`, 'dim');
-
-  const captionUrl = track.baseUrl + '&fmt=json3';
-  const captionHtml = await proxyFetch(captionUrl);
-  const captionData = JSON.parse(captionHtml);
-
-  const text = captionData.events
-    ?.filter(e => e.segs)
-    .map(e => e.segs.map(s => s.utf8).join('').replace(/\n/g, ' '))
-    .join(' ')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
-
-  if (!text || text.length < 50) throw new Error('Transcript text too short or empty');
-
-  return { title, text, url: `https://www.youtube.com/watch?v=${videoId}`, type: 'youtube' };
+  if (!tracks?.length) throw new Error('No caption tracks found');
+  const track = tracks.find(t => t.languageCode==='en' && !t.kind)
+              || tracks.find(t => t.languageCode==='en')
+              || tracks[0];
+  log(`  Caption: ${track.name?.simpleText || track.languageCode}`, 'dim');
+  const capJson = await proxyFetch(track.baseUrl + '&fmt=json3');
+  const capData = JSON.parse(capJson);
+  const text = capData.events?.filter(e=>e.segs).map(e=>e.segs.map(s=>s.utf8).join('').replace(/\n/g,' ')).join(' ').replace(/\s{2,}/g,' ').trim();
+  if (!text || text.length < 50) throw new Error('Transcript text too short');
+  return { title, text, url: `https://www.youtube.com/watch?v=${videoId}`, source: `YouTube: ${title}` };
 }
 
-// ── Web page content ─────────────────────────────────────────────────────────
+// ── Web page content ──────────────────────────────────────────────────────────
 async function getWebContent(url) {
-  log(`  Fetching page via proxy…`, 'dim');
+  log('  Fetching page…', 'dim');
   const html = await proxyFetch(url);
-
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(html, 'text/html');
-
-  // Strip noise
-  const strip = ['script','style','noscript','iframe','nav','header','footer','aside',
-    '[class*="ad-"]','[id*="ad-"]','[class*="sidebar"]','[class*="menu"]',
-    '[class*="social"]','[class*="share"]','[class*="comment"]','[class*="related"]',
-    '[class*="newsletter"]','[class*="cookie"]','[class*="popup"]','[class*="banner"]',
-    '[role="navigation"]','[role="complementary"]','[role="banner"]','[role="contentinfo"]'];
-  strip.forEach(sel => { try { doc.querySelectorAll(sel).forEach(e => e.remove()); } catch(_){} });
-
-  // Extract title
-  const title = (doc.querySelector('h1')?.textContent || doc.title || 'Untitled').trim().slice(0, 120);
-
-  // Find main content
-  const selectors = ['main','article','[role="main"]','.entry-content','.post-content',
-    '.article-content','.content','#content','.article','.post'];
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  ['script','style','noscript','iframe','nav','header','footer','aside',
+   '[class*="ad-"]','[id*="ad-"]','[class*="sidebar"]','[class*="social"]',
+   '[class*="comment"]','[class*="related"]','[class*="newsletter"]',
+   '[class*="cookie"]','[class*="popup"]','[class*="banner"]',
+   '[role="navigation"]','[role="complementary"]','[role="banner"]','[role="contentinfo"]']
+   .forEach(sel => { try { doc.querySelectorAll(sel).forEach(e=>e.remove()); } catch(_){} });
+  const title = (doc.querySelector('h1')?.textContent || doc.title || 'Untitled').trim().slice(0,120);
   let container = null;
-  for (const sel of selectors) {
-    const el = doc.querySelector(sel);
+  for (const s of ['main','article','[role="main"]','.entry-content','.post-content','.content','#content']) {
+    const el = doc.querySelector(s);
     if (el && el.textContent.trim().length > 300) { container = el; break; }
   }
   if (!container) container = doc.body;
-
-  const raw = container?.textContent || '';
-  const text = raw.replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim().slice(0, 14000);
-
-  if (text.length < 100) throw new Error('Page content too short — may require login or JS rendering');
-
-  return { title, text, url, type: 'web' };
+  const text = (container?.textContent||'').replace(/[ \t]{2,}/g,' ').replace(/\n{3,}/g,'\n\n').trim().slice(0,14000);
+  if (text.length < 100) throw new Error('Content too short — may require login or JS rendering');
+  return { title, text, url, source: `${new URL(url).hostname}: ${title}` };
 }
 
-// ── Anthropic API ─────────────────────────────────────────────────────────────
-async function callClaude(apiKey, content, counts) {
-  const { title, text, url, type } = content;
-  const source = type === 'youtube'
-    ? `YouTube: ${title} — ${url}`
-    : `${new URL(url).hostname}: ${title}`;
+// ── Claude API ────────────────────────────────────────────────────────────────
+const SYSTEM = `You are a study materials generator. Return ONLY a raw JSON object — no markdown, no code fences, no explanation.
 
-  const prefix = type === 'youtube'
-    ? `yt-${extractVideoId(url)}`
-    : `web-${Date.now().toString(36)}`;
-
-  const { glossaryN, flashN, questN } = counts;
-
-  const systemPrompt = `You are a study materials generator. Given content from a lesson, you MUST return ONLY a valid JSON object with no markdown, no explanation, no code fences — raw JSON only.
-
-The JSON must follow this exact schema:
+Schema:
 {
-  "notes": [ { "id": string, "title": string, "chapter": string, "body": string, "module": string } ],
-  "glossary": [ { "id": string, "term": string, "def": string, "chapter": string, "source": string, "module": string } ],
-  "flashcards": [ { "id": string, "front": string, "back": string, "chapter": string, "source": string, "module": string } ],
-  "questions": [ { "id": string, "type": "mc", "text": string, "options": [string, string, string, string], "answer": string, "chapter": string, "source": string, "module": string } ]
+  "note_title": string,
+  "note_body": string,
+  "glossary": [ {"term": string, "def": string} ],
+  "flashcards": [ {"front": string, "back": string} ],
+  "questions": [ {"text": string, "options": [string,string,string,string], "answer": string} ]
 }
 
-Rules:
-- Generate exactly 1 note, ${glossaryN} glossary entries, ${flashN} flashcards, ${questN} multiple choice questions
-- Note body: comprehensive structured study notes with ALL-CAPS section headers (like existing entries), using newlines between sections
-- Glossary defs: 1-3 sentences, clear and precise
-- Flashcard front: a question; back: the complete answer
-- Questions: 4 options, exactly one correct answer matching the "answer" field verbatim
-- IDs: use pattern "${prefix}-n001", "${prefix}-g001", "${prefix}-f001", "${prefix}-q001" etc.
-- Set "module" to "" (empty string) on ALL entries
-- Return ONLY the raw JSON object, nothing else`;
+Note body: comprehensive structured notes, ALL-CAPS section headers, newline-separated sections.
+Questions: exactly 4 options, answer matches one option verbatim.
+Return ONLY the JSON object, nothing else.`;
 
-  const userMsg = `SOURCE: ${source}
-CONTENT:
-${text}`;
+function getCounts() {
+  return { light: {g:5,f:3,q:3}, standard: {g:10,f:5,q:5}, deep: {g:15,f:8,q:8} }
+    [document.getElementById('itemCounts').value] || {g:10,f:5,q:5};
+}
 
+async function callClaude(apiKey, contentObj) {
+  const { title, text, source } = contentObj;
+  const c = getCounts();
+  const prompt = `SOURCE: ${source}\n\nGenerate: 1 note, ${c.g} glossary entries, ${c.f} flashcards, ${c.q} questions.\n\nCONTENT:\n${text.slice(0,12000)}`;
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -606,50 +497,50 @@ ${text}`;
     body: JSON.stringify({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 4096,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userMsg }]
+      system: SYSTEM,
+      messages: [{ role: 'user', content: prompt }]
     })
   });
-
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(`Claude API error ${res.status}: ${err?.error?.message || res.statusText}`);
+    const err = await res.json().catch(()=>({}));
+    throw new Error(`Claude API ${res.status}: ${err?.error?.message || res.statusText}`);
   }
-
   const data = await res.json();
   const raw = data.content?.[0]?.text?.trim();
-  if (!raw) throw new Error('Empty response from Claude');
-
-  try {
-    return JSON.parse(raw);
-  } catch {
-    // Try to extract JSON from the response
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (jsonMatch) return JSON.parse(jsonMatch[0]);
-    throw new Error('Could not parse JSON from Claude response');
-  }
+  try { return JSON.parse(raw); }
+  catch { const m = raw.match(/\{[\s\S]*\}/); if(m) return JSON.parse(m[0]); throw new Error('Could not parse Claude response as JSON'); }
 }
 
-// ── Counts by mode ────────────────────────────────────────────────────────────
-function getCounts() {
-  const mode = document.getElementById('itemCounts').value;
+// ── Build repo entries ────────────────────────────────────────────────────────
+function buildEntries(ai, contentObj) {
+  const { source } = contentObj;
+  const chapter = document.getElementById('chapterTag').value.trim() || 'web';
+  const module  = document.getElementById('moduleId').value.trim();
+  const pid = `src-${Date.now().toString(36)}`;
   return {
-    light:    { glossaryN: 5,  flashN: 3, questN: 3 },
-    standard: { glossaryN: 10, flashN: 5, questN: 5 },
-    deep:     { glossaryN: 15, flashN: 8, questN: 8 },
-  }[mode] || { glossaryN: 10, flashN: 5, questN: 5 };
+    note: { id:`${pid}-n001`, title: ai.note_title || source.slice(0,80), chapter, body: ai.note_body||'', module },
+    glossary:   (ai.glossary||[]).map((g,i) => ({ id:`${pid}-g${String(i+1).padStart(3,'0')}`, term:g.term, def:g.def, chapter, source, module })),
+    flashcards: (ai.flashcards||[]).map((f,i) => ({ id:`${pid}-f${String(i+1).padStart(3,'0')}`, front:f.front, back:f.back, chapter, source, module })),
+    questions:  (ai.questions||[]).map((q,i) => ({ id:`${pid}-q${String(i+1).padStart(3,'0')}`, type:'mc', text:q.text, options:q.options, answer:q.answer, chapter, source, module })),
+  };
 }
 
-// ── Main run ─────────────────────────────────────────────────────────────────
+// ── Main run ──────────────────────────────────────────────────────────────────
 async function run() {
-  const apiKey   = document.getElementById('apiKey').value.trim();
-  const moduleId = document.getElementById('moduleId').value.trim();
-  const chapter  = document.getElementById('chapterTag').value.trim() || 'web';
-  const rawUrls  = document.getElementById('urls').value;
-  const urls     = parseURLs(rawUrls);
+  const apiKey = document.getElementById('apiKey').value.trim();
+  if (!apiKey) { log('API key required.', 'err'); document.getElementById('log').style.display='block'; return; }
 
-  if (!apiKey) { log('API key is required.', 'err'); document.getElementById('log').style.display='block'; return; }
-  if (!urls.length) { log('Please enter at least one URL.', 'err'); document.getElementById('log').style.display='block'; return; }
+  const activeTab = document.querySelector('.tab.active').textContent.trim();
+  const isFilesTab = activeTab.includes('Files');
+
+  const urlList   = isFilesTab ? [] : parseURLs(document.getElementById('urls').value);
+  const fileQueue = isFilesTab ? [...uploadedFiles] : [];
+
+  if (!urlList.length && !fileQueue.length) {
+    log('Nothing to process — add URLs or upload files.', 'err');
+    document.getElementById('log').style.display='block';
+    return;
+  }
 
   document.getElementById('btnProcess').disabled = true;
   document.getElementById('btnProcess').innerHTML = '<span class="spinner"></span>Processing…';
@@ -658,120 +549,146 @@ async function run() {
   document.getElementById('preview').style.display = 'none';
   result = null;
 
-  const counts = getCounts();
-  const merged = { notes: [], glossary: [], flashcards: [], questions: [] };
+  const merged = { notes:[], glossary:[], flashcards:[], questions:[] };
   const sources = [];
   let ok = 0, fail = 0;
+  const total = urlList.length + fileQueue.length;
 
-  log(`Starting: ${urls.length} URL${urls.length > 1 ? 's' : ''}`, 'info');
+  log(`Starting — ${total} source${total>1?'s':''}.`, 'info');
 
-  for (let i = 0; i < urls.length; i++) {
-    const url = urls[i];
-    log(`[${i+1}/${urls.length}] ${url}`, 'info');
-
+  // ── Process URLs ────────────────────────────────────────────────────────────
+  for (let i = 0; i < urlList.length; i++) {
+    const url = urlList[i];
+    log(`[${i+1}/${total}] ${url}`, 'info');
     try {
-      // 1. Fetch content
       let content;
       if (isYouTube(url)) {
         const vid = extractVideoId(url);
-        if (!vid) throw new Error('Could not extract YouTube video ID');
+        if (!vid) throw new Error('Invalid YouTube URL');
         content = await getYTTranscript(vid);
       } else {
         content = await getWebContent(url);
       }
-      log(`  ✓ Content extracted — ${content.text.length.toLocaleString()} chars`, 'ok');
-
-      // 2. Generate study materials
-      log(`  Calling Claude (${document.getElementById('itemCounts').value} mode)…`, 'dim');
-      const generated = await callClaude(apiKey, content, counts);
-
-      // 3. Apply module + chapter overrides and merge
-      ['notes','glossary','flashcards','questions'].forEach(key => {
-        (generated[key] || []).forEach(item => {
-          if (moduleId) item.module = moduleId;
-          if (chapter)  item.chapter = chapter;
-          merged[key].push(item);
-        });
-      });
-
+      log(`  ✓ Extracted ${content.text.length.toLocaleString()} chars`, 'ok');
+      log('  Generating study materials…', 'dim');
+      const ai = await callClaude(apiKey, content);
+      const entries = buildEntries(ai, content);
+      merged.notes.push(entries.note);
+      merged.glossary.push(...entries.glossary);
+      merged.flashcards.push(...entries.flashcards);
+      merged.questions.push(...entries.questions);
       sources.push(url);
-      log(`  ✓ Generated: ${generated.notes?.length||0} note, ${generated.glossary?.length||0} glossary, ${generated.flashcards?.length||0} flashcards, ${generated.questions?.length||0} questions`, 'ok');
+      log(`  ✓ ${1} note, ${entries.glossary.length} glossary, ${entries.flashcards.length} flashcards, ${entries.questions.length} questions`, 'ok');
       ok++;
-
-    } catch (e) {
-      log(`  ✗ Failed: ${e.message}`, 'err');
+    } catch(e) {
+      log(`  ✗ ${e.message}`, 'err');
       fail++;
     }
+    if (i < urlList.length - 1 || fileQueue.length) await new Promise(r => setTimeout(r, 1500));
+  }
 
-    // Polite delay between requests
-    if (i < urls.length - 1) {
-      log(`  Waiting 2s before next URL…`, 'dim');
-      await new Promise(r => setTimeout(r, 2000));
+  // ── Process files ───────────────────────────────────────────────────────────
+  for (let i = 0; i < fileQueue.length; i++) {
+    const fileObj = fileQueue[i];
+    const n = urlList.length + i + 1;
+    log(`[${n}/${total}] ${fileObj.name}`, 'info');
+    fileObj.status = 'processing'; renderFileList();
+    try {
+      log('  Extracting text…', 'dim');
+      const text = await extractFileText(fileObj);
+      if (!text || text.length < 50) throw new Error('File appears empty or unreadable');
+      log(`  ✓ Extracted ${text.length.toLocaleString()} chars`, 'ok');
+      const content = { title: fileObj.name, text, source: `File: ${fileObj.name}`, url: '' };
+      log('  Generating study materials…', 'dim');
+      const ai = await callClaude(apiKey, content);
+      const entries = buildEntries(ai, content);
+      merged.notes.push(entries.note);
+      merged.glossary.push(...entries.glossary);
+      merged.flashcards.push(...entries.flashcards);
+      merged.questions.push(...entries.questions);
+      sources.push(`file:${fileObj.name}`);
+      log(`  ✓ ${1} note, ${entries.glossary.length} glossary, ${entries.flashcards.length} flashcards, ${entries.questions.length} questions`, 'ok');
+      fileObj.status = 'done'; ok++;
+    } catch(e) {
+      log(`  ✗ ${e.message}`, 'err');
+      fileObj.status = 'error'; fail++;
     }
+    renderFileList();
+    if (i < fileQueue.length - 1) await new Promise(r => setTimeout(r, 1500));
   }
 
   log(`Done. ${ok} succeeded, ${fail} failed.`, ok > 0 ? 'ok' : 'err');
 
   if (ok > 0) {
     result = {
-      _import_meta: {
-        generated: new Date().toISOString(),
-        source_count: sources.length,
-        sources
-      },
+      _import_meta: { generated: new Date().toISOString(), source_count: ok, sources },
       ...merged
     };
-
-    // Show stats
-    const statsEl = document.getElementById('stats');
-    statsEl.style.display = 'block';
-    document.getElementById('statsRow').innerHTML = [
-      ['notes',      merged.notes.length,      'Notes'],
-      ['glossary',   merged.glossary.length,   'Glossary'],
-      ['flashcards', merged.flashcards.length, 'Flashcards'],
-      ['questions',  merged.questions.length,  'Questions'],
-    ].map(([,n,l]) => `<div class="stat"><span class="stat-n">${n}</span><span class="stat-l">${l}</span></div>`).join('');
-
-    // Show preview
+    document.getElementById('stats').style.display = 'block';
+    document.getElementById('statsRow').innerHTML =
+      [['notes',merged.notes.length,'Notes'],['glossary',merged.glossary.length,'Glossary'],
+       ['flashcards',merged.flashcards.length,'Flashcards'],['questions',merged.questions.length,'Questions']]
+      .map(([,n,l]) => `<div class="stat"><span class="stat-n">${n}</span><span class="stat-l">${l}</span></div>`).join('');
     const prev = document.getElementById('preview');
     prev.style.display = 'block';
-    prev.textContent = JSON.stringify(result, null, 2).slice(0, 3000) + '\n…';
-
+    prev.textContent = JSON.stringify(result, null, 2).slice(0, 2500) + '\n…';
     document.getElementById('btnDownload').disabled = false;
   }
 
   document.getElementById('btnProcess').disabled = false;
-  document.getElementById('btnProcess').innerHTML = 'Process URLs';
+  document.getElementById('btnProcess').innerHTML = 'Process';
 }
 
-// ── Download ─────────────────────────────────────────────────────────────────
+// ── Download ──────────────────────────────────────────────────────────────────
 function download() {
   if (!result) return;
-  const json = JSON.stringify(result, null, 2);
-  const blob = new Blob([json], { type: 'application/json' });
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' }));
   a.download = `study_import_${new Date().toISOString().slice(0,10)}.json`;
   a.click();
   URL.revokeObjectURL(a.href);
   log('JSON file downloaded.', 'ok');
 }
 
-// ── Clear ────────────────────────────────────────────────────────────────────
+// ── Clear ─────────────────────────────────────────────────────────────────────
 function clearAll() {
   document.getElementById('urls').value = '';
   document.getElementById('url-tags').innerHTML = '';
-  document.getElementById('log').innerHTML = '';
-  document.getElementById('log').style.display = 'none';
-  document.getElementById('stats').style.display = 'none';
-  document.getElementById('preview').style.display = 'none';
+  uploadedFiles = []; renderFileList();
+  ['log','stats','preview'].forEach(id => {
+    const el = document.getElementById(id);
+    el.style.display = 'none';
+    if (id === 'log') el.innerHTML = '';
+  });
   document.getElementById('btnDownload').disabled = true;
   result = null;
 }
 
-// ── Restore API key from sessionStorage ─────────────────────────────────────
-const savedKey = sessionStorage.getItem('sri_apikey');
-if (savedKey) document.getElementById('apiKey').value = savedKey;
+// ── Proxy test ────────────────────────────────────────────────────────────────
+async function testProxies() {
+  document.getElementById('log').style.display = 'block';
+  log('Testing proxies against example.com…', 'info');
+  document.getElementById('btnTestProxy').disabled = true;
+  const testUrl = 'https://example.com';
+  const custom = document.getElementById('customProxy').value.trim();
+  const proxies = custom
+    ? [{ name:'custom-proxy', build: u => custom+encodeURIComponent(u), extract: async r=>r.text() }, ...PUBLIC_PROXIES]
+    : PUBLIC_PROXIES;
+  for (const proxy of proxies) {
+    try {
+      const res = await fetch(proxy.build(testUrl), { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) { log(`  ${proxy.name}: HTTP ${res.status}`, 'err'); continue; }
+      const text = await proxy.extract(res);
+      log(`  ${proxy.name}: ✓ OK (${(text||'').length} bytes)`, 'ok');
+    } catch(e) { log(`  ${proxy.name}: ✗ ${e.message}`, 'err'); }
+  }
+  log('Proxy test complete.', 'info');
+  document.getElementById('btnTestProxy').disabled = false;
+}
+
+// ── Restore API key from sessionStorage ──────────────────────────────────────
+const saved = sessionStorage.getItem('sri_apikey');
+if (saved) document.getElementById('apiKey').value = saved;
 document.getElementById('apiKey').addEventListener('change', function() {
   sessionStorage.setItem('sri_apikey', this.value);
 });
