@@ -178,6 +178,35 @@ footer a:hover{text-decoration:underline}
       </select>
     </div>
   </div>
+  <!-- GitHub settings sync -->
+  <div class="row" style="margin-top:.25rem">
+    <div>
+      <label for="ghToken">GitHub Token <span style="font-weight:400;opacity:.6">(for saving settings)</span></label>
+      <input type="password" id="ghToken" placeholder="ghp_…" autocomplete="off">
+      <div class="hint">
+        Needs <code>Contents: Read &amp; Write</code> on the study-importer repo.
+        <a href="https://github.com/settings/tokens/new?description=study-importer&scopes=repo" target="_blank" style="color:var(--accent-lt)">Create token ↗</a>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;justify-content:flex-end">
+      <button class="btn-ghost btn-sm" onclick="saveSettingsToGitHub()" id="btnSaveSettings" style="margin-bottom:.4rem">💾 Save settings to repo</button>
+      <div class="hint" id="settingsSyncStatus"></div>
+    </div>
+  </div>
+
+  <!-- GitHub settings sync -->
+  <div class="row" style="margin-top:.75rem">
+    <div>
+      <label for="ghToken">GitHub Token <span style="font-weight:400;opacity:.6">(for saving settings)</span></label>
+      <input type="password" id="ghToken" placeholder="ghp_…" autocomplete="off">
+      <div class="hint">Needs <code>Contents: Read &amp; Write</code> on study-importer. <a href="https://github.com/settings/tokens/new?description=study-importer&scopes=repo" target="_blank" style="color:var(--accent-lt)">Create token ↗</a></div>
+    </div>
+    <div style="display:flex;flex-direction:column;justify-content:flex-end;gap:.4rem">
+      <button class="btn-ghost btn-sm" onclick="saveSettingsToGitHub()" id="btnSaveSettings">Save settings to repo</button>
+      <div class="hint" id="settingsSyncStatus" style="color:var(--green)"></div>
+    </div>
+  </div>
+
   <!-- Custom proxy -->
   <details style="margin-top:.25rem">
     <summary style="cursor:pointer;font-size:.8rem;color:var(--muted);user-select:none;list-style:none;display:flex;align-items:center;gap:.4rem">
@@ -670,14 +699,38 @@ async function run() {
 }
 
 // ── Download ──────────────────────────────────────────────────────────────────
+function getDownloadFilename() {
+  if (!result) return 'study_import.json';
+  const sources = result._import_meta?.sources || [];
+
+  // Single file upload — use filename without extension
+  if (sources.length === 1 && sources[0].startsWith('file:')) {
+    const name = sources[0].replace('file:', '');
+    return name.replace(/\.[^.]+$/, '') + '.json';
+  }
+
+  // Single URL — use hostname + last path slug
+  if (sources.length === 1) {
+    try {
+      const u = new URL(sources[0]);
+      const slug = u.pathname.split('/').filter(Boolean).pop() || u.hostname;
+      return slug.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 60) + '.json';
+    } catch { /* fall through */ }
+  }
+
+  // Multiple sources — date-stamped
+  return `study_import_${new Date().toISOString().slice(0,10)}.json`;
+}
+
 function download() {
   if (!result) return;
+  const filename = getDownloadFilename();
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' }));
-  a.download = `study_import_${new Date().toISOString().slice(0,10)}.json`;
+  a.download = filename;
   a.click();
   URL.revokeObjectURL(a.href);
-  log('JSON file downloaded.', 'ok');
+  log(`JSON downloaded as: ${filename}`, 'ok');
 }
 
 // ── Clear ─────────────────────────────────────────────────────────────────────
@@ -716,12 +769,107 @@ async function testProxies() {
   document.getElementById('btnTestProxy').disabled = false;
 }
 
-// ── Restore API key from sessionStorage ──────────────────────────────────────
-const saved = sessionStorage.getItem('sri_apikey');
-if (saved) document.getElementById('apiKey').value = saved;
+// ── Settings sync via GitHub API ─────────────────────────────────────────────
+// API key and GitHub token: sessionStorage (security — clears on tab close)
+// All other settings: saved to settings.json in the study-importer repo
+
+const GH_OWNER    = 'thetripleb';
+const GH_REPO     = 'study-importer';
+const GH_SETTINGS = 'settings.json';
+
+const savedKey = sessionStorage.getItem('sri_apikey');
+if (savedKey) document.getElementById('apiKey').value = savedKey;
 document.getElementById('apiKey').addEventListener('change', function() {
   sessionStorage.setItem('sri_apikey', this.value);
 });
+
+const savedGhToken = sessionStorage.getItem('sri_ghtoken');
+if (savedGhToken) document.getElementById('ghToken').value = savedGhToken;
+document.getElementById('ghToken').addEventListener('change', function() {
+  sessionStorage.setItem('sri_ghtoken', this.value);
+});
+
+async function loadSettingsFromGitHub() {
+  try {
+    const res = await fetch(
+      `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${GH_SETTINGS}`,
+      { headers: { Accept: 'application/vnd.github.v3+json' } }
+    );
+    if (!res.ok) return; // No settings file yet — that's fine
+    const data = await res.json();
+    const settings = JSON.parse(atob(data.content.replace(/\n/g, '')));
+    if (settings.customProxy)  document.getElementById('customProxy').value  = settings.customProxy;
+    if (settings.moduleId)     document.getElementById('moduleId').value     = settings.moduleId;
+    if (settings.chapterTag)   document.getElementById('chapterTag').value   = settings.chapterTag;
+    if (settings.itemCounts)   document.getElementById('itemCounts').value   = settings.itemCounts;
+    document.getElementById('settingsSyncStatus').textContent = 'Settings loaded from repo.';
+  } catch(e) {
+    // Silently fail — settings file may not exist yet
+  }
+}
+
+async function saveSettingsToGitHub() {
+  const token = document.getElementById('ghToken').value.trim();
+  if (!token) {
+    document.getElementById('settingsSyncStatus').textContent = 'Enter a GitHub token first.';
+    return;
+  }
+  const settings = {
+    customProxy: document.getElementById('customProxy').value.trim(),
+    moduleId:    document.getElementById('moduleId').value.trim(),
+    chapterTag:  document.getElementById('chapterTag').value.trim(),
+    itemCounts:  document.getElementById('itemCounts').value,
+    savedAt:     new Date().toISOString(),
+  };
+
+  document.getElementById('btnSaveSettings').disabled = true;
+  document.getElementById('settingsSyncStatus').textContent = 'Saving…';
+
+  try {
+    // Check if file already exists to get its SHA (required for updates)
+    let sha = null;
+    const checkRes = await fetch(
+      `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${GH_SETTINGS}`,
+      { headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github.v3+json' } }
+    );
+    if (checkRes.ok) {
+      const existing = await checkRes.json();
+      sha = existing.sha;
+    }
+
+    const body = {
+      message: 'Update study-importer settings',
+      content: btoa(JSON.stringify(settings, null, 2)),
+    };
+    if (sha) body.sha = sha;
+
+    const putRes = await fetch(
+      `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${GH_SETTINGS}`,
+      {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/vnd.github.v3+json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      }
+    );
+
+    if (!putRes.ok) {
+      const err = await putRes.json();
+      throw new Error(err.message || putRes.statusText);
+    }
+
+    document.getElementById('settingsSyncStatus').textContent = '✓ Settings saved to repo.';
+  } catch(e) {
+    document.getElementById('settingsSyncStatus').textContent = '✗ ' + e.message;
+  }
+  document.getElementById('btnSaveSettings').disabled = false;
+}
+
+// Load settings on page start
+loadSettingsFromGitHub();
 </script>
 </body>
 </html>
