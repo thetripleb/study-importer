@@ -10,6 +10,8 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- Mammoth.js for .docx extraction -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+<!-- JSZip for .pptx extraction -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <style>
 :root {
   --bg:        #0d0d0f;
@@ -228,7 +230,7 @@ footer a:hover{text-decoration:underline}
   <!-- Files tab -->
   <div class="tab-panel" id="tab-files" style="padding-top:1rem">
     <div class="dropzone" id="dropzone">
-      <input type="file" id="fileInput" multiple accept=".pdf,.txt,.md,.docx,.doc" onchange="handleFiles(this.files)">
+      <input type="file" id="fileInput" multiple accept=".pdf,.txt,.md,.docx,.doc,.pptx,.ppt" onchange="handleFiles(this.files)">
       <div class="dropzone-icon">📂</div>
       <div class="dropzone-text"><strong>Drop files here</strong> or click to browse</div>
       <div class="dropzone-hint">Supports PDF, Word (.docx), plain text (.txt, .md)</div>
@@ -371,7 +373,7 @@ function handleFiles(fileList) {
   for (const file of fileList) {
     if (uploadedFiles.find(f => f.name === file.name)) continue;
     const ext = file.name.split('.').pop().toLowerCase();
-    if (!['pdf','txt','md','docx','doc'].includes(ext)) {
+    if (!['pdf','txt','md','docx','doc','pptx','ppt'].includes(ext)) {
       log(`Skipped ${file.name} — unsupported type (use PDF, DOCX, TXT, MD)`, 'warn');
       continue;
     }
@@ -384,7 +386,7 @@ function renderFileList() {
   const list = document.getElementById('file-list');
   if (!uploadedFiles.length) { list.innerHTML = ''; return; }
   list.innerHTML = uploadedFiles.map((f, i) => {
-    const icons = { pdf: '📕', txt: '📝', md: '📝', docx: '📘', doc: '📘' };
+    const icons = { pdf: '📕', txt: '📝', md: '📝', docx: '📘', doc: '📘', pptx: '📊', ppt: '📊' };
     const icon = icons[f.ext] || '📄';
     const size = f.file.size < 1024*1024 ? `${(f.file.size/1024).toFixed(0)} KB` : `${(f.file.size/1024/1024).toFixed(1)} MB`;
     const statusColor = f.status === 'done' ? 'var(--green)' : f.status === 'error' ? '#f87171' : f.status === 'processing' ? 'var(--yellow)' : 'var(--muted)';
@@ -423,6 +425,30 @@ async function extractFileText(fileObj) {
     const result = await mammoth.extractRawText({ arrayBuffer });
     return result.value.trim();
   }
+  if (ext === 'pptx' || ext === 'ppt') {
+    if (typeof JSZip === 'undefined') throw new Error('JSZip not loaded');
+    const arrayBuffer = await file.arrayBuffer();
+    const zip = await JSZip.loadAsync(arrayBuffer);
+    const slideFiles = Object.keys(zip.files)
+      .filter(name => /^ppt\/slides\/slide\d+\.xml$/.test(name))
+      .sort((a, b) => {
+        const na = parseInt(a.match(/\d+/)[0]);
+        const nb = parseInt(b.match(/\d+/)[0]);
+        return na - nb;
+      });
+    if (!slideFiles.length) throw new Error('No slides found in PPTX file');
+    const slideTexts = await Promise.all(slideFiles.map(async (name, i) => {
+      const xml = await zip.files[name].async('string');
+      // Extract text from <a:t> tags (DrawingML text runs)
+      const matches = xml.match(/<a:t[^>]*>([^<]+)<\/a:t>/g) || [];
+      const text = matches.map(m => m.replace(/<[^>]+>/g, '')).join(' ').trim();
+      return text ? `[Slide ${i+1}] ${text}` : null;
+    }));
+    const fullText = slideTexts.filter(Boolean).join('\n\n');
+    if (!fullText.trim()) throw new Error('No text content found in PPTX slides');
+    return fullText;
+  }
+
   // txt / md — plain read
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
