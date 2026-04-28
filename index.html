@@ -634,40 +634,14 @@ async function getWebContent(url) {
 }
 
 // ── Claude API ────────────────────────────────────────────────────────────────
-const SYSTEM = `You are a study materials generator. Return ONLY a raw JSON object — no markdown, no code fences, no explanation.
-
-Schema:
-{
-  "note_title": string,
-  "note_body": string,
-  "glossary": [ {"term": string, "def": string} ],
-  "flashcards": [ {"front": string, "back": string} ],
-  "questions": [ {"text": string, "options": [string,string,string,string], "answer": string} ]
-}
-
-CRITICAL RULES FOR note_body:
-- Cover EVERY topic, section, and concept in the source — do NOT summarize or drop content.
-- Use ALL-CAPS section headers matching the source slide or section titles exactly.
-- Under each header include ALL bullet points, details, statistics, researcher names, dates, and examples verbatim.
-- Include speaker notes content where present — label it NOTE: under the relevant section.
-- If the source has 20 slides or sections, the notes must reflect all 20 — never collapse or skip sections.
-- More complete is always better than shorter. Aim to retain 100% of factual content.
-
-RULES FOR glossary, flashcards, questions:
-- Glossary: include every key term that appears in the source with a precise, complete definition.
-- Flashcards: front is a specific question; back is a complete, detailed answer including any relevant stats or context.
-- Questions: 4 options, answer must match one option verbatim, test specific facts not vague generalities.
-Return ONLY the JSON object, nothing else.`;
+// SYSTEM prompts moved to SYSTEM_NOTE and SYSTEM_STUDY (split-call architecture)
 
 function getCounts() {
-  return { light: {g:5,f:3,q:3}, standard: {g:10,f:5,q:5}, deep: {g:15,f:8,q:8} }
-    [document.getElementById('itemCounts').value] || {g:10,f:5,q:5};
+  return { light: {g:10,f:8,q:8}, standard: {g:20,f:15,q:15}, deep: {g:30,f:20,q:25} }
+    [document.getElementById('itemCounts').value] || {g:20,f:15,q:15};
 }
 
-async function callClaude(apiKey, contentObj) {
-  const { title, text, source } = contentObj;
-  const c = getCounts();
-  const prompt = `SOURCE: ${source}\n\nGenerate: 1 note, ${c.g} glossary entries, ${c.f} flashcards, ${c.q} questions.\n\nCONTENT:\n${text.slice(0,12000)}`;
+async function claudeAPI(apiKey, systemPrompt, userPrompt, maxTokens=8000) {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -678,9 +652,9 @@ async function callClaude(apiKey, contentObj) {
     },
     body: JSON.stringify({
       model: 'claude-sonnet-4-6',
-      max_tokens: 8192,
-      system: SYSTEM,
-      messages: [{ role: 'user', content: prompt }]
+      max_tokens: maxTokens,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userPrompt }]
     })
   });
   if (!res.ok) {
@@ -688,8 +662,166 @@ async function callClaude(apiKey, contentObj) {
     throw new Error(`Claude API ${res.status}: ${err?.error?.message || res.statusText}`);
   }
   const data = await res.json();
-  const raw = data.content?.[0]?.text?.trim();
-  return repairAndParseJSON(raw);
+  return data.content?.[0]?.text?.trim();
+}
+
+const SYSTEM_NOTE = `You are a study materials expert. Return ONLY a raw JSON object — no markdown, no code fences, no explanation.
+
+Schema: { "note_title": string, "note_body": string }
+
+RULES FOR note_body:
+- Cover EVERY topic, section, and concept in the source — do NOT summarize or drop content.
+- Use ALL-CAPS section headers matching the source slide or section titles exactly.
+- Under each header include ALL bullet points, definitions, statistics, researcher names, dates, clinical examples, and mnemonics verbatim.
+- Include speaker notes content where present — label it NOTE: under the relevant section.
+- If the source has 20 slides or sections, the notes must reflect all 20 — never collapse or skip.
+- Use ━━━ dividers between major sections for readability.
+- Include a ★ KEY EXAM POINTS section at the end summarizing the most testable facts.
+- More complete is always better than shorter. Retain 100% of factual content.`;
+
+const SYSTEM_STUDY = `You are a study materials expert. Return ONLY a raw JSON object — no markdown, no code fences, no explanation.
+
+Schema:
+{
+  "glossary": [ {"term": string, "def": string} ],
+  "flashcards": [ {"front": string, "back": string} ],
+  "questions": [
+    {"type": "mc", "text": string, "options": [string,string,string,string], "answer": string},
+    {"type": "tf", "text": string, "answer": "true"|"false"},
+    {"type": "fitb", "text": string, "answer": string}
+  ]
+}
+
+RULES — treat all counts as MINIMUMS, generate more if the content warrants it:
+GLOSSARY: Every key term, disorder, anatomy structure, technique, test, researcher, or clinical concept. Definitions must be complete and precise — include etiology, characteristics, examples. Never truncate a definition.
+FLASHCARDS: Front = specific clinical or factual question. Back = complete answer with any relevant stats, exceptions, or context. Cover mechanisms, comparisons, and application — not just definitions.
+QUESTIONS: Mix types — roughly 60% mc, 20% tf, 20% fitb.
+  MC: 4 options, plausible distractors, answer matches one option exactly. Test specific facts not vague generalities.
+  TF: Clear factual statements — half true, half false. Include the false ones to build critical thinking.
+  FITB: "The ___ is responsible for ___" style — blank should be a specific term.
+Prioritize content that would appear on a clinical or certification exam.
+Return ONLY the JSON object, nothing else.`;
+
+// ── Per-file-type character limits ───────────────────────────────────────────
+// PDF and DOCX are dense prose — allow more. PPTX/TXT are naturally sparser.
+function getTextLimit(ext) {
+  if (ext === 'pdf')             return 80000;  // ~60 pages of body text
+  if (ext === 'docx' || ext === 'doc') return 60000;  // ~45 pages
+  if (ext === 'pptx' || ext === 'ppt') return 30000;  // ~60 sparse slides
+  return 24000;                                // txt, md, url, youtube
+}
+
+// ── Chunk text into segments with paragraph-boundary awareness ────────────────
+function chunkText(text, chunkSize = 20000, overlap = 1000) {
+  if (text.length <= chunkSize) return [text];
+  const chunks = [];
+  let pos = 0;
+  while (pos < text.length) {
+    let end = pos + chunkSize;
+    if (end < text.length) {
+      // Try to break on a paragraph boundary (double newline) near the end
+      const boundary = text.lastIndexOf('\n\n', end);
+      if (boundary > pos + chunkSize * 0.6) end = boundary;
+      // Fallback: break on single newline
+      else {
+        const nl = text.lastIndexOf('\n', end);
+        if (nl > pos + chunkSize * 0.6) end = nl;
+      }
+    }
+    chunks.push(text.slice(pos, end).trim());
+    pos = end - overlap;  // small overlap ensures concepts at chunk boundaries aren't lost
+    if (pos < 0) pos = 0;
+  }
+  return chunks.filter(c => c.length > 100);
+}
+
+// ── Deduplicate merged glossary/flashcard/question lists ─────────────────────
+function deduplicateByKey(arr, keyFn) {
+  const seen = new Set();
+  return arr.filter(item => {
+    const k = keyFn(item).toLowerCase().trim().slice(0, 60);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
+async function callClaude(apiKey, contentObj) {
+  const { title, text, source, ext } = contentObj;
+  const c = getCounts();
+  const limit = getTextLimit(ext || 'txt');
+  const fullText = text.slice(0, limit);
+  const chunks = chunkText(fullText, 20000, 800);
+  const isChunked = chunks.length > 1;
+
+  log(`  ${isChunked ? chunks.length + ' chunks' : '1 chunk'} (${fullText.length.toLocaleString()} chars, limit ${limit.toLocaleString()})`, 'dim');
+
+  // ── CALL 1: Note — always uses the FULL text (single call, full budget) ────
+  // For very long files, send a higher-level summary prompt to avoid truncation
+  const noteText = isChunked
+    ? fullText.slice(0, 40000)   // note gets more headroom — 40k chars
+    : fullText;
+  const notePrompt = `SOURCE: ${source}\n\nCONTENT:\n${noteText}`;
+  const noteRaw = await claudeAPI(apiKey, SYSTEM_NOTE, notePrompt, 8000);
+  const noteResult = repairAndParseJSON(noteRaw);
+
+  // ── CALLS 2+: Study materials — chunked if text is long ──────────────────
+  // Each chunk gets its own full 8000-token budget for study items
+  // Per-chunk minimums scaled down so totals stay proportionate
+  const chunkMin = {
+    g: Math.max(8,  Math.ceil(c.g / chunks.length)),
+    f: Math.max(5,  Math.ceil(c.f / chunks.length)),
+    q: Math.max(5,  Math.ceil(c.q / chunks.length)),
+  };
+
+  const allGlossary   = [];
+  const allFlashcards = [];
+  const allQuestions  = [];
+
+  for (let ci = 0; ci < chunks.length; ci++) {
+    const chunk = chunks[ci];
+    const chunkLabel = isChunked ? ` (chunk ${ci+1}/${chunks.length})` : '';
+    if (isChunked) log(`  Study materials${chunkLabel}…`, 'dim');
+
+    const studyPrompt = `SOURCE: ${source}${chunkLabel}
+
+Generate AT LEAST ${chunkMin.g} glossary entries, AT LEAST ${chunkMin.f} flashcards, and AT LEAST ${chunkMin.q} questions.
+Generate MORE than the minimum if the content is dense or covers many distinct concepts.
+Every important concept in this section should appear in at least one collection.
+${isChunked ? `NOTE: This is section ${ci+1} of ${chunks.length} from the same source — focus on concepts in THIS section only.` : ''}
+
+CONTENT:
+${chunk}`;
+
+    try {
+      const studyRaw = await claudeAPI(apiKey, SYSTEM_STUDY, studyPrompt, 8000);
+      const studyResult = repairAndParseJSON(studyRaw);
+      allGlossary.push(  ...(studyResult.glossary   || []));
+      allFlashcards.push(...(studyResult.flashcards || []));
+      allQuestions.push( ...(studyResult.questions  || []));
+    } catch(e) {
+      log(`  ⚠ Chunk ${ci+1} study call failed: ${e.message}`, 'warn');
+      // continue — partial results are better than none
+    }
+
+    // Brief pause between chunk calls to avoid rate limiting
+    if (ci < chunks.length - 1) await new Promise(r => setTimeout(r, 800));
+  }
+
+  // Deduplicate across chunks (same term may appear in overlapping sections)
+  const glossary   = deduplicateByKey(allGlossary,   g => g.term  || '');
+  const flashcards = deduplicateByKey(allFlashcards, f => f.front || '');
+  const questions  = deduplicateByKey(allQuestions,  q => q.text  || '');
+
+  if (isChunked) log(`  Merged: ${glossary.length} glossary, ${flashcards.length} flashcards, ${questions.length} questions`, 'dim');
+
+  return {
+    note_title: noteResult.note_title || title,
+    note_body:  noteResult.note_body  || '',
+    glossary,
+    flashcards,
+    questions,
+  };
 }
 
 // Attempt to parse JSON, with repair for truncated responses
@@ -757,7 +889,11 @@ function buildEntries(ai, contentObj) {
     note: { id:`${pid}-n001`, title: ai.note_title || source.slice(0,80), chapter, body: ai.note_body||'', module },
     glossary:   (ai.glossary||[]).map((g,i) => ({ id:`${pid}-g${String(i+1).padStart(3,'0')}`, term:g.term, def:g.def, chapter, source, module })),
     flashcards: (ai.flashcards||[]).map((f,i) => ({ id:`${pid}-f${String(i+1).padStart(3,'0')}`, front:f.front, back:f.back, chapter, source, module })),
-    questions:  (ai.questions||[]).map((q,i) => ({ id:`${pid}-q${String(i+1).padStart(3,'0')}`, type:'mc', text:q.text, options:q.options, answer:q.answer, chapter, source, module })),
+    questions:  (ai.questions||[]).map((q,i) => {
+      const base = { id:`${pid}-q${String(i+1).padStart(3,'0')}`, type: q.type||'mc', text:q.text, answer:q.answer, chapter, source, module };
+      if ((q.type||'mc') === 'mc') base.options = q.options;
+      return base;
+    }),
   };
 }
 
@@ -798,8 +934,10 @@ async function run() {
         const vid = extractVideoId(url);
         if (!vid) throw new Error('Invalid YouTube URL');
         content = await getYTTranscript(vid);
+        content.ext = 'youtube';
       } else {
         content = await getWebContent(url);
+        content.ext = 'url';
       }
       log(`  ✓ Extracted ${content.text.length.toLocaleString()} chars`, 'ok');
       log('  Calling Claude…', 'dim');
@@ -863,7 +1001,7 @@ async function processOneFile(fileObj, apiKey) {
     log(`  ✓ Extracted ${text.length.toLocaleString()} chars`, 'ok');
 
     // Step 2: Call Claude
-    const contentObj = { title: fileObj.name, text, source: `File: ${fileObj.name}`, url: '' };
+    const contentObj = { title: fileObj.name, text, source: `File: ${fileObj.name}`, url: '', ext: fileObj.ext };
     log('  Calling Claude…', 'dim');
     let ai;
     try {
@@ -883,7 +1021,7 @@ async function processOneFile(fileObj, apiKey) {
     };
     fileObj.outputName = outputName;
     fileObj.status = 'done';
-    log(`  ✓ ${counts} → ${outputName}`, 'ok');
+    log(`  ✓ ${entries.glossary.length} glossary, ${entries.flashcards.length} flashcards, ${entries.questions.length} questions, 1 note → ${outputName}`, 'ok');
 
   } catch(e) {
     const detail = buildErrorDetail(e);
