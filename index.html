@@ -763,7 +763,14 @@ async function callClaude(apiKey, contentObj) {
     : fullText;
   const notePrompt = `SOURCE: ${source}\n\nCONTENT:\n${noteText}`;
   const noteRaw = await claudeAPI(apiKey, SYSTEM_NOTE, notePrompt, 8000);
-  const noteResult = repairAndParseJSON(noteRaw);
+  let noteResult;
+  try {
+    noteResult = repairAndParseJSON(noteRaw);
+  } catch(e) {
+    log('  ⚠ Note parse failed, retrying with AI repair…', 'warn');
+    const noteSchema = '{ "note_title": string, "note_body": string }';
+    noteResult = await repairWithClaude(apiKey, noteRaw, noteSchema);
+  }
 
   // ── CALLS 2+: Study materials — chunked if text is long ──────────────────
   // Each chunk gets its own full 8000-token budget for study items
@@ -795,7 +802,14 @@ ${chunk}`;
 
     try {
       const studyRaw = await claudeAPI(apiKey, SYSTEM_STUDY, studyPrompt, 8000);
-      const studyResult = repairAndParseJSON(studyRaw);
+      let studyResult;
+      try {
+        studyResult = repairAndParseJSON(studyRaw);
+      } catch(e) {
+        log(`  ⚠ Study parse failed chunk ${ci+1}, retrying with AI repair…`, 'warn');
+        const studySchema = '{ "glossary": [...], "flashcards": [...], "questions": [...] }';
+        studyResult = await repairWithClaude(apiKey, studyRaw, studySchema);
+      }
       allGlossary.push(  ...(studyResult.glossary   || []));
       allFlashcards.push(...(studyResult.flashcards || []));
       allQuestions.push( ...(studyResult.questions  || []));
@@ -828,36 +842,39 @@ ${chunk}`;
 function repairAndParseJSON(raw) {
   if (!raw) throw new Error('Empty response from Claude');
 
-  // ── Strategy 1: Clean parse ─────────────────────────────────────────────────
-  try { return JSON.parse(raw); } catch(_) {}
+  // ── Strategy 1: Strip markdown fences ──────────────────────────────────────
+  // Claude sometimes wraps JSON in ```json ... ``` despite instructions
+  let cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
 
-  // Find the start of the JSON object
-  const start = raw.indexOf('{');
-  if (start === -1) throw new Error('No JSON object found in response');
+  // ── Strategy 2: Clean parse of stripped response ────────────────────────────
+  try { return JSON.parse(cleaned); } catch(_) {}
 
-  // ── Strategy 2: Extract the first COMPLETE {...} block ──────────────────────
-  // Handles: valid JSON followed by trailing text (Claude ignoring "no explanation")
+  // ── Strategy 3: Extract the outermost {...} block ───────────────────────────
+  // Handles preamble/postamble text around the JSON object
+  const start = cleaned.indexOf('{');
+  if (start === -1) throw new Error(`No JSON object found in response. Preview: ${raw.slice(0, 200)}`);
+
   {
     let depth = 0, inStr = false, esc = false, end = -1;
-    for (let i = start; i < raw.length; i++) {
-      const ch = raw[i];
-      if (esc)         { esc = false; continue; }
+    for (let i = start; i < cleaned.length; i++) {
+      const ch = cleaned[i];
+      if (esc)           { esc = false; continue; }
       if (ch === '\\') { esc = true;  continue; }
-      if (ch === '"')  { inStr = !inStr; continue; }
-      if (inStr)       continue;
-      if (ch === '{')  depth++;
+      if (ch === '"')    { inStr = !inStr; continue; }
+      if (inStr)         continue;
+      if (ch === '{')    depth++;
       else if (ch === '}') { depth--; if (depth === 0) { end = i; break; } }
     }
     if (end !== -1) {
-      try { return JSON.parse(raw.slice(start, end + 1)); } catch(_) {}
+      try { return JSON.parse(cleaned.slice(start, end + 1)); } catch(_) {}
     }
   }
 
-  // ── Strategy 3: Repair truncated response ───────────────────────────────────
+  // ── Strategy 4: Repair truncated response ──────────────────────────────────
   // Handles: response cut off mid-content by token limit
-  let text = raw.slice(start);
+  let text = cleaned.slice(start);
 
-  // Close open string if truncated mid-string
+  // Scan for structural state
   let inString = false, escape = false;
   let openBraces = 0, openBrackets = 0;
   for (const ch of text) {
@@ -870,13 +887,32 @@ function repairAndParseJSON(raw) {
     else if (ch === '[') openBrackets++;
     else if (ch === ']') openBrackets--;
   }
-  if (inString) text += '"';           // close hanging string
-  text = text.replace(/,\s*$/, '');   // strip trailing comma
+  if (inString)   text += '"';
+  text = text.replace(/,\s*([\]\}])/, '$1');  // trailing comma before ] or }
+  text = text.replace(/,\s*$/, '');
   while (openBrackets > 0) { text += ']'; openBrackets--; }
   while (openBraces   > 0) { text += '}'; openBraces--;   }
 
   try { return JSON.parse(text); }
-  catch(e) { throw new Error('Could not parse or repair Claude response: ' + e.message); }
+  catch(e) {
+    // Attach the raw response snippet to help diagnose
+    const preview = raw.slice(0, 300).replace(/\n/g, ' ');
+    throw new Error(`JSON repair failed: ${e.message} | Response preview: ${preview}`);
+  }
+}
+
+// ── AI-powered JSON self-repair ───────────────────────────────────────────────
+// If normal repair fails, send the broken response back to Claude and ask it to fix it
+async function repairWithClaude(apiKey, brokenRaw, schema) {
+  const repairPrompt = `The following text was supposed to be a JSON object matching this schema:
+${schema}
+
+The text failed to parse as JSON. Fix it and return ONLY the corrected JSON object — no explanation, no markdown:
+
+${brokenRaw.slice(0, 6000)}`;
+
+  const raw = await claudeAPI(apiKey, 'You are a JSON repair expert. Return ONLY valid JSON, nothing else.', repairPrompt, 4000);
+  return repairAndParseJSON(raw);  // one more attempt after repair
 }
 
 // ── Build repo entries ────────────────────────────────────────────────────────
@@ -1054,11 +1090,14 @@ function buildErrorDetail(e) {
   const raw = e?.message || String(e);
 
   // ── JSON / parse errors ────────────────────────────────────────────────────
-  if (raw.includes('JSON') || raw.includes('position') || raw.includes('parse')) {
+  if (raw.includes('JSON') || raw.includes('position') || raw.includes('parse') || raw.includes('repair')) {
+    // Extract the response preview from the error message if present
+    const previewMatch = raw.match(/Response preview: (.+)/);
+    const preview = previewMatch ? `\nResponse started with: "${previewMatch[1].slice(0,120)}…"` : '';
     return {
       label: 'Response Parse Error',
-      message: 'Claude returned a response that could not be parsed as JSON.',
-      hint: 'Try switching to Light density mode (fewer items) or process this file on its own — large files sometimes push the response over the token limit.'
+      message: `Claude returned a response that could not be parsed as valid JSON — even after auto-repair.${preview}`,
+      hint: 'Most likely cause: Claude added markdown fences (```json) or explanatory text around the JSON. This has been fixed in the repair logic — try retrying the file. If it keeps failing, try Light density mode.'
     };
   }
 
