@@ -763,13 +763,22 @@ async function callClaude(apiKey, contentObj) {
     : fullText;
   const notePrompt = `SOURCE: ${source}\n\nCONTENT:\n${noteText}`;
   const noteRaw = await claudeAPI(apiKey, SYSTEM_NOTE, notePrompt, 8000);
+  console.debug('[NOTE RAW]', noteRaw);
   let noteResult;
   try {
     noteResult = repairAndParseJSON(noteRaw);
   } catch(e) {
-    log('  ⚠ Note parse failed, retrying with AI repair…', 'warn');
-    const noteSchema = '{ "note_title": string, "note_body": string }';
-    noteResult = await repairWithClaude(apiKey, noteRaw, noteSchema);
+    log(`  ⚠ Note parse failed (${e.message.slice(0,80)})`, 'warn');
+    log(`  Raw response preview: ${(noteRaw||'').slice(0,200).replace(/\n/g,' ')}`, 'dim');
+    log('  Retrying with AI repair…', 'dim');
+    try {
+      const noteSchema = '{ "note_title": string, "note_body": string }';
+      noteResult = await repairWithClaude(apiKey, noteRaw, noteSchema);
+    } catch(e2) {
+      log(`  ✗ AI repair also failed: ${e2.message.slice(0,80)}`, 'warn');
+      // Use empty note rather than failing the whole file
+      noteResult = { note_title: title, note_body: '(Note generation failed — content may contain characters that disrupted JSON parsing.)' };
+    }
   }
 
   // ── CALLS 2+: Study materials — chunked if text is long ──────────────────
@@ -802,13 +811,21 @@ ${chunk}`;
 
     try {
       const studyRaw = await claudeAPI(apiKey, SYSTEM_STUDY, studyPrompt, 8000);
+      console.debug(`[STUDY RAW chunk ${ci+1}]`, studyRaw);
       let studyResult;
       try {
         studyResult = repairAndParseJSON(studyRaw);
       } catch(e) {
-        log(`  ⚠ Study parse failed chunk ${ci+1}, retrying with AI repair…`, 'warn');
-        const studySchema = '{ "glossary": [...], "flashcards": [...], "questions": [...] }';
-        studyResult = await repairWithClaude(apiKey, studyRaw, studySchema);
+        log(`  ⚠ Study parse failed chunk ${ci+1}: ${e.message.slice(0,80)}`, 'warn');
+        log(`  Raw preview: ${(studyRaw||'').slice(0,200).replace(/\n/g,' ')}`, 'dim');
+        log('  Retrying with AI repair…', 'dim');
+        try {
+          const studySchema = '{ "glossary": [...], "flashcards": [...], "questions": [...] }';
+          studyResult = await repairWithClaude(apiKey, studyRaw, studySchema);
+        } catch(e2) {
+          log(`  ✗ AI repair failed chunk ${ci+1}: ${e2.message.slice(0,80)}`, 'warn');
+          studyResult = { glossary: [], flashcards: [], questions: [] };
+        }
       }
       allGlossary.push(  ...(studyResult.glossary   || []));
       allFlashcards.push(...(studyResult.flashcards || []));
@@ -992,8 +1009,10 @@ async function run() {
       log(`  ✓ ${entries.glossary.length} glossary, ${entries.flashcards.length} flashcards, ${entries.questions.length} questions`, 'ok');
       ok++;
     } catch(e) {
+      console.error('[FULL ERROR]', e);
       const detail = buildErrorDetail(e);
       log(`  ✗ [${detail.label}] ${detail.message}`, 'err');
+      log(`  Detail: ${(e?.message||'').slice(0,200)}`, 'dim');
       if (detail.hint) log(`  💡 ${detail.hint}`, 'warn');
       fail++;
     }
@@ -1060,10 +1079,12 @@ async function processOneFile(fileObj, apiKey) {
     log(`  ✓ ${entries.glossary.length} glossary, ${entries.flashcards.length} flashcards, ${entries.questions.length} questions, 1 note → ${outputName}`, 'ok');
 
   } catch(e) {
+    console.error('[FILE ERROR]', e);
     const detail = buildErrorDetail(e);
     fileObj.status = 'error';
     fileObj.err = detail;
     log(`  ✗ [${detail.label}] ${detail.message}`, 'err');
+    log(`  Detail: ${(e?.message||String(e)).slice(0,250)}`, 'dim');
     if (detail.hint) log(`  💡 ${detail.hint}`, 'warn');
   }
 }
