@@ -959,7 +959,7 @@ async function run() {
   const isFilesTab = activeTab.includes('Files');
 
   const urlList   = isFilesTab ? [] : parseURLs(document.getElementById('urls').value);
-  const fileQueue = isFilesTab ? [...uploadedFiles] : [];
+  const fileQueue = isFilesTab ? [...uploadedFiles].filter(f => f.status !== 'done') : [];
 
   if (!urlList.length && !fileQueue.length) {
     log('Nothing to process — add URLs or upload files.', 'err');
@@ -974,8 +974,10 @@ async function run() {
   document.getElementById('preview').style.display = 'none';
 
   let ok = 0, fail = 0;
+  const skipped = isFilesTab ? uploadedFiles.filter(f => f.status === 'done').length : 0;
   const total = urlList.length + fileQueue.length;
-  log(`Starting — ${total} source${total>1?'s':''}.`, 'info');
+  const skipNote = skipped > 0 ? ` (${skipped} already done — skipped)` : '';
+  log(`Starting — ${total} source${total>1?'s':''}${skipNote}.`, 'info');
 
   // ── Process URLs ────────────────────────────────────────────────────────────
   for (let i = 0; i < urlList.length; i++) {
