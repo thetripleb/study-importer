@@ -400,10 +400,12 @@ function renderFileList() {
   list.innerHTML = uploadedFiles.map((f, i) => {
     const icons = { pdf: '📕', txt: '📝', md: '📝', docx: '📘', doc: '📘', pptx: '📊', ppt: '📊' };
     const icon = icons[f.ext] || '📄';
-    const size = f.file.size < 1024*1024 ? `${(f.file.size/1024).toFixed(0)} KB` : `${(f.file.size/1024/1024).toFixed(1)} MB`;
+    const size = f.file?.size
+      ? (f.file.size < 1024*1024 ? `${(f.file.size/1024).toFixed(0)} KB` : `${(f.file.size/1024/1024).toFixed(1)} MB`)
+      : null;  // URL sources have no file object
 
     const statusBadge = {
-      ready:      `<span style="color:var(--muted);font-family:var(--font-mono);font-size:.72rem">${size}</span>`,
+      ready:      size ? `<span style="color:var(--muted);font-family:var(--font-mono);font-size:.72rem">${size}</span>` : '',
       processing: `<span style="color:var(--yellow);font-family:var(--font-mono);font-size:.72rem">⏳ processing…</span>`,
       done:       `<a class="file-item-dl" onclick="downloadFile(${i})">⬇ ${f.outputName || 'download'}</a>`,
       error:      `<span style="color:#f87171;font-family:var(--font-mono);font-size:.72rem">✗ failed</span>`,
