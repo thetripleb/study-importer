@@ -234,6 +234,7 @@ footer a:hover{text-decoration:underline}
     <label for="urls">Enter URLs — one per line. YouTube and web pages both supported.</label>
     <textarea id="urls" placeholder="https://www.youtube.com/watch?v=98-6WfdumZY&#10;https://www.simplypsychology.org/vygotsky.html&#10;https://developer.mozilla.org/en-US/docs/..."></textarea>
     <div id="url-tags"></div>
+    <div id="url-results"></div>
   </div>
 
   <!-- Files tab -->
@@ -268,7 +269,7 @@ footer a:hover{text-decoration:underline}
 <footer>
   <span>Study Repo Importer · <code>humdev_data.json</code>-compatible output</span>
   <span style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap">
-    <span style="font-family:var(--font-mono);font-size:.72rem;color:var(--muted);border:1px solid var(--muted);border-radius:99px;padding:.15rem .6rem;opacity:.7">v1.9</span>
+    <span style="font-family:var(--font-mono);font-size:.72rem;color:var(--muted);border:1px solid var(--muted);border-radius:99px;padding:.15rem .6rem;opacity:.7">v2.1</span>
     <span>Powered by <a href="https://anthropic.com" target="_blank">Anthropic Claude</a></span>
   </span>
 </footer>
@@ -283,7 +284,12 @@ if (typeof pdfjsLib !== 'undefined') {
 
 // ── State ────────────────────────────────────────────────────────────────────
 let result = null;
-let uploadedFiles = []; // { file, name, type, status }
+let uploadedFiles = []; // { file, name, ext, status, result, outputName }
+
+// Restore any results from previous session on page load
+document.addEventListener('DOMContentLoaded', () => {
+  loadPersistedResults();
+});
 
 // ── Proxies (tried in order) ─────────────────────────────────────────────────
 const PUBLIC_PROXIES = [
@@ -433,6 +439,40 @@ function renderFileList() {
   }).join('');
 }
 
+function renderURLResults() {
+  const panel = document.getElementById('url-results');
+  if (!panel) return;
+  // Only show URL-sourced results (ext === 'url' or 'youtube')
+  const urlDone = uploadedFiles.filter(f => (f.ext === 'url' || f.ext === 'youtube') && f.status === 'done' && f.result);
+  if (!urlDone.length) { panel.innerHTML = ''; return; }
+
+  panel.innerHTML = `
+    <div style="margin-top:1rem;display:flex;flex-direction:column;gap:.5rem">
+      <div style="font-size:.8rem;color:var(--muted);font-family:var(--font-mono);margin-bottom:.25rem">${urlDone.length} result${urlDone.length>1?'s':''} ready</div>
+      ${urlDone.map((f, _i) => {
+        const globalIdx = uploadedFiles.indexOf(f);
+        const icon = f.ext === 'youtube' ? '🎬' : '🔗';
+        const shortName = (() => { try { const u = new URL(f.name); return u.hostname + u.pathname.slice(0,40); } catch{ return f.name.slice(0,60); } })();
+        const counts = f.result ? [
+          f.result.notes?.length      ? `${f.result.notes.length} note${f.result.notes.length>1?'s':''}` : '',
+          f.result.glossary?.length   ? `${f.result.glossary.length} terms` : '',
+          f.result.flashcards?.length ? `${f.result.flashcards.length} cards` : '',
+          f.result.questions?.length  ? `${f.result.questions.length} questions` : '',
+        ].filter(Boolean).join(' · ') : '';
+        return `<div class="file-item done" style="flex-wrap:wrap;gap:.4rem">
+          <span class="file-item-icon">${icon}</span>
+          <div class="file-item-wrap" style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;min-width:0">
+              <span class="file-item-name" style="font-size:.8rem;opacity:.8">${shortName}</span>
+              <a class="file-item-dl" onclick="downloadFile(${globalIdx})">⬇ ${f.outputName || 'download'}</a>
+            </div>
+            ${counts ? `<div style="font-size:.72rem;color:var(--muted);font-family:var(--font-mono);margin-top:.15rem">${counts}</div>` : ''}
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`;
+}
+
 function downloadFile(i) {
   const f = uploadedFiles[i];
   if (!f || !f.result) return;
@@ -462,7 +502,7 @@ function downloadAll() {
   const payload = { _import_meta:{ generated: new Date().toISOString(), source_count: done.length, sources }, ...merged };
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type:'application/json' }));
-  a.download = `study_import_${new Date().toISOString().slice(0,10)}.json`;
+  a.download = `study_import_${new Date().toISOString().slice(0,10)}_${Date.now()}.json`;
   a.click();
   URL.revokeObjectURL(a.href);
   log(`Downloaded merged file (${done.length} sources)`, 'ok');
@@ -643,28 +683,109 @@ function getCounts() {
     [document.getElementById('itemCounts').value] || {g:20,f:15,q:15};
 }
 
-async function claudeAPI(apiKey, systemPrompt, userPrompt, maxTokens=8000) {
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true'
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-6',
-      max_tokens: maxTokens,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userPrompt }]
-    })
+// ── Network resilience ───────────────────────────────────────────────────────
+let processingPaused = false;
+
+function isNetworkError(e) {
+  // TypeError = fetch failed (no connection); distinguish from API errors (have status codes)
+  return e instanceof TypeError || e.message?.includes('Failed to fetch') ||
+         e.message?.includes('NetworkError') || e.message?.includes('net::');
+}
+
+async function waitForConnection(label) {
+  if (navigator.onLine) return;
+  updateOfflineBanner(true);
+  log(`  ⏸ ${label || 'Waiting for connection…'}`, 'warn');
+  await new Promise(resolve => {
+    const check = () => { if (navigator.onLine) { window.removeEventListener('online', check); resolve(); } };
+    window.addEventListener('online', check);
+    // Also poll every 5s in case the event doesn't fire
+    const poll = setInterval(() => { if (navigator.onLine) { clearInterval(poll); resolve(); } }, 5000);
   });
-  if (!res.ok) {
-    const err = await res.json().catch(()=>({}));
-    throw new Error(`Claude API ${res.status}: ${err?.error?.message || res.statusText}`);
+  updateOfflineBanner(false);
+  log('  ▶ Connection restored — resuming…', 'ok');
+  await new Promise(r => setTimeout(r, 1000)); // brief pause before retry
+}
+
+function updateOfflineBanner(show) {
+  let banner = document.getElementById('offline-banner');
+  if (show) {
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'offline-banner';
+      banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:999;background:#7c2d12;color:#fed7aa;text-align:center;padding:.6rem 1rem;font-size:.85rem;font-family:var(--font-mono)';
+      banner.innerHTML = '⚠ No internet connection — processing paused. Will resume automatically when connection is restored.';
+      document.body.prepend(banner);
+    }
+  } else {
+    banner?.remove();
   }
-  const data = await res.json();
-  return data.content?.[0]?.text?.trim();
+}
+
+// Listen for offline/online events globally
+window.addEventListener('offline', () => updateOfflineBanner(true));
+window.addEventListener('online',  () => updateOfflineBanner(false));
+
+async function claudeAPI(apiKey, systemPrompt, userPrompt, maxTokens=8000) {
+  const MAX_RETRIES = 6;
+  const BACKOFF = [2000, 4000, 8000, 16000, 30000, 60000]; // ms between retries
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    // Check connection before each attempt
+    if (!navigator.onLine) await waitForConnection('Waiting for connection before API call…');
+
+    try {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true'
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-6',
+          max_tokens: maxTokens,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: userPrompt }]
+        })
+      });
+
+      // Rate limit — retryable
+      if (res.status === 429) {
+        const wait = BACKOFF[Math.min(attempt, BACKOFF.length-1)];
+        log(`  ⏳ Rate limited — waiting ${wait/1000}s before retry ${attempt+1}/${MAX_RETRIES}…`, 'warn');
+        await new Promise(r => setTimeout(r, wait));
+        continue;
+      }
+
+      // Server error — retryable
+      if (res.status >= 500) {
+        const wait = BACKOFF[Math.min(attempt, BACKOFF.length-1)];
+        log(`  ⏳ Server error (${res.status}) — retry ${attempt+1}/${MAX_RETRIES} in ${wait/1000}s…`, 'warn');
+        await new Promise(r => setTimeout(r, wait));
+        continue;
+      }
+
+      // Auth / bad request — not retryable
+      if (!res.ok) {
+        const err = await res.json().catch(()=>({}));
+        throw new Error(`Claude API ${res.status}: ${err?.error?.message || res.statusText}`);
+      }
+
+      const data = await res.json();
+      return data.content?.[0]?.text?.trim();
+
+    } catch(e) {
+      if (isNetworkError(e)) {
+        // Network failure — wait for connection then retry
+        await waitForConnection(`Network error on attempt ${attempt+1} — waiting for connection…`);
+        continue; // retry immediately after reconnect
+      }
+      throw e; // non-network error — propagate
+    }
+  }
+  throw new Error(`Failed after ${MAX_RETRIES} retries — check connection and API key`);
 }
 
 const SYSTEM_NOTE = `You are a study materials expert. Return ONLY a raw JSON object — no markdown, no code fences, no explanation.
@@ -934,6 +1055,50 @@ ${brokenRaw.slice(0, 6000)}`;
   return repairAndParseJSON(raw);  // one more attempt after repair
 }
 
+// ── Result persistence ───────────────────────────────────────────────────────
+const PERSIST_KEY = 'study_importer_results_v1';
+
+function persistResults() {
+  try {
+    const toSave = uploadedFiles
+      .filter(f => f.status === 'done' && f.result)
+      .map(f => ({ name: f.name, ext: f.ext, outputName: f.outputName, result: f.result }));
+    localStorage.setItem(PERSIST_KEY, JSON.stringify(toSave));
+  } catch(e) {
+    console.warn('Could not persist results:', e);
+  }
+}
+
+function loadPersistedResults() {
+  try {
+    const raw = localStorage.getItem(PERSIST_KEY);
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    if (!saved?.length) return;
+    // Restore as done entries (no .file object — that's gone after page refresh)
+    saved.forEach(f => {
+      // Avoid duplicates if user already has files loaded
+      if (!uploadedFiles.find(u => u.name === f.name && u.status === 'done')) {
+        uploadedFiles.push({ name: f.name, ext: f.ext, status: 'done',
+                             result: f.result, outputName: f.outputName });
+      }
+    });
+    if (saved.length) {
+      renderFileList();
+      renderURLResults();
+      document.getElementById('btnDownloadAll').disabled = false;
+      log(`♻ Restored ${saved.length} result${saved.length>1?'s':''} from previous session.`, 'ok');
+      document.getElementById('log').style.display = 'block';
+    }
+  } catch(e) {
+    console.warn('Could not load persisted results:', e);
+  }
+}
+
+function clearPersistedResults() {
+  localStorage.removeItem(PERSIST_KEY);
+}
+
 // ── Build repo entries ────────────────────────────────────────────────────────
 function buildEntries(ai, contentObj) {
   const { source } = contentObj;
@@ -1009,7 +1174,9 @@ async function run() {
       const urlSlug = (() => { try { const u = new URL(url); return u.pathname.split('/').filter(Boolean).pop() || u.hostname; } catch{ return 'url'; } })();
       const urlFileObj = { name: url, ext: 'url', status: 'done', result: fileResult, outputName: urlSlug.replace(/[^a-zA-Z0-9_-]/g,'_').slice(0,60)+'.json', errorMsg: '' };
       uploadedFiles.push(urlFileObj);
+      persistResults();
       renderFileList();
+      renderURLResults();
       log(`  ✓ ${entries.glossary.length} glossary, ${entries.flashcards.length} flashcards, ${entries.questions.length} questions`, 'ok');
       ok++;
     } catch(e) {
@@ -1080,6 +1247,7 @@ async function processOneFile(fileObj, apiKey) {
     };
     fileObj.outputName = outputName;
     fileObj.status = 'done';
+    persistResults();
     log(`  ✓ ${entries.glossary.length} glossary, ${entries.flashcards.length} flashcards, ${entries.questions.length} questions, 1 note → ${outputName}`, 'ok');
 
   } catch(e) {
@@ -1203,7 +1371,8 @@ function buildErrorDetail(e) {
 function clearAll() {
   document.getElementById('urls').value = '';
   document.getElementById('url-tags').innerHTML = '';
-  uploadedFiles = []; renderFileList();
+  uploadedFiles = []; renderFileList(); renderURLResults();
+  clearPersistedResults();
   ['log','stats','preview'].forEach(id => {
     const el = document.getElementById(id);
     el.style.display = 'none';
